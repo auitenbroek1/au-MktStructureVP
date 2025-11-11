@@ -1,6 +1,6 @@
 # Market Structure Volume Profile (au-MSVP)
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.1-blue)
 ![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-brightgreen)
 ![License](https://img.shields.io/badge/license-MPL--2.0-orange)
 
@@ -16,6 +16,7 @@ The Market Structure Volume Profile (MSVP) indicator revolutionizes traditional 
 - **Statistical Profile Engine** - Uses PDF (Probability Density Function) models for accurate volume distribution
 - **Advanced Buy/Sell Analysis** - Dynamic volume estimator analyzes wicks and trends
 - **Flexible Display Modes** - View as Up/Down, Total Volume, or Delta
+- **Peak Rectangle Highlighting** - Automatically draws rectangles around high-volume peaks
 - **Dynamic Row Sizing** - Automatically adjusts profile resolution based on price range
 - **13 Built-in Alerts** - Real-time notifications for key level crosses
 - **Non-Repainting** - Structure/Delta modes plot with confirmed data
@@ -69,6 +70,10 @@ Profiles reset when cumulative delta's market structure breaks (new HH or LL in 
 - **Profile Width**: Adjust visual width (1-100%)
 - **Side**: Display on left or right
 - **Colors**: Customize buy/sell volume colors
+- **Peak Rectangles**: Enable/disable highlighting of high-volume peaks
+  - Customizable border color and fill transparency
+  - Adjustable border width (1-4 pixels)
+  - Configurable extension bars (10-200 bars forward)
 
 ## 📊 Indicator Components
 
@@ -128,7 +133,13 @@ This indicator uses the following Pine Script libraries:
 
 See [CHANGELOG.md](changelog/CHANGELOG.md) for detailed version history.
 
-**Current Version: 1.0.0**
+**Current Version: 1.0.1** (2025-01-11)
+- Added peak rectangle highlighting feature
+- Rectangles automatically identify high-volume zones (≥50% of max volume)
+- Fully customizable colors, border width, and extension distance
+- Optimized threshold calculation for improved performance
+
+**Version 1.0.0** (2025-01-10)
 - Initial release
 - Event-based profile anchoring (Swing/Structure/Delta)
 - Statistical volume distribution engine
