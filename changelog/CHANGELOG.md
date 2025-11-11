@@ -5,6 +5,37 @@ All notable changes to the Market Structure Volume Profile (au-MSVP) indicator w
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2025-01-11
+
+### Added
+- **Historical Profile Peak Tracking**: Peak rectangles now render across all historical volume profiles
+  - Stores up to 50 historical profiles with peak data
+  - Automatic capture of peak arrays on anchor changes (Swing/Structure/Delta)
+  - Two-phase rendering: historical profiles first, then current profile
+  - Historical peaks extend to profile end + extension bars
+- **Deep Copy Implementation**: Peak arrays deep copied using array.copy() when storing historical data
+- **FIFO Memory Management**: Synchronized cleanup across 4 parallel arrays
+  - historicalStartBars/EndBars for profile boundaries
+  - historicalPeakStarts/Ends for nested peak data
+  - Automatic box deletion when removing oldest profiles
+
+### Changed
+- Peak detection now uses working arrays (currentPeakStarts/Ends) cleared on each profile reset
+- Rectangle rendering split into Phase 1 (historical) and Phase 2 (current)
+- Box limit checks moved before each box creation for proactive memory management
+
+### Technical Details
+- Lines 500-502: Working array declarations
+- Lines 509-543: Historical capture logic on anchor change
+- Lines 564-570: Historical storage array declarations (MAX_HISTORICAL_PROFILES = 50)
+- Lines 601-624: Peak detection stores in working arrays
+- Lines 847-920: Two-phase rendering implementation
+
+### Performance
+- O(n × m) rendering where n = profiles (≤50), m = peaks per profile (typically 2-5)
+- Typical box count: 50 profiles × 3 peaks = 150 boxes (30% of 500 limit)
+- FIFO cleanup maintains 10-box buffer for burst protection
+
 ## [1.0.1] - 2025-01-11
 
 ### Added

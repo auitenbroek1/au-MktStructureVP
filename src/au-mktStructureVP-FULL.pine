@@ -1,6 +1,6 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © AustrianTradingMachine
-// Version: 1.0.1
+// Version: 1.0.2
 
 // ── HEADER ───────────────────────────────────────────────────────────────────
 // @version=6
@@ -496,10 +496,52 @@ else if profAnchor == ProfAnchor.delta
 var series int resetBar = na
 series int     startBar = na
 series int       endBar = na
+
+// Working arrays for peak detection (will be copied to historical on anchor change)
+var array<int> currentPeakStarts = array.new<int>()
+var array<int> currentPeakEnds = array.new<int>()
+
 if prfReset
     if not na(resetBar)
         startBar := resetBar - delay
         endBar   := bar_index - 1 - delay
+
+        // ══════════════════════════════════════════════════════════════════
+        // HISTORICAL PROFILE CAPTURE
+        // ══════════════════════════════════════════════════════════════════
+        // Capture completed profile data when anchor changes (skip first profile)
+
+        if array.size(currentPeakStarts) > 0
+            // Deep copy peak arrays
+            array<int> peakStartsCopy = array.copy(currentPeakStarts)
+            array<int> peakEndsCopy = array.copy(currentPeakEnds)
+
+            // Store profile boundaries and peaks
+            array.push(historicalStartBars, startBar)
+            array.push(historicalEndBars, endBar)
+            array.push(historicalPeakStarts, peakStartsCopy)
+            array.push(historicalPeakEnds, peakEndsCopy)
+
+            // FIFO cleanup if exceeding limit
+            if array.size(historicalStartBars) > MAX_HISTORICAL_PROFILES
+                array.shift(historicalStartBars)
+                array.shift(historicalEndBars)
+
+                // Delete associated peak arrays
+                array<int> removedStarts = array.shift(historicalPeakStarts)
+                array<int> removedEnds = array.shift(historicalPeakEnds)
+
+                // Delete associated boxes (approximate cleanup)
+                // Note: We don't have direct box-to-profile mapping, so we rely on FIFO
+                int boxesToRemove = array.size(removedStarts)
+                for i = 0 to math.min(boxesToRemove, array.size(allBoxes)) - 1
+                    if array.size(allBoxes) > 0
+                        box.delete(array.shift(allBoxes))
+
+        // Clear working arrays for new profile
+        array.clear(currentPeakStarts)
+        array.clear(currentPeakEnds)
+
     resetBar := bar_index
 
     msProf.clear()
@@ -560,6 +602,14 @@ series int offset = profAnchor == ProfAnchor.swing ? 0 : pivRi
 // ── PLOTTING ─────────────────────────────────────────────────────────────────
 var array<polyline> allPolylines = array.new<polyline>()
 var array<box> allBoxes = array.new<box>()
+
+// Historical profile peak storage
+var array<int> historicalStartBars = array.new<int>()
+var array<int> historicalEndBars = array.new<int>()
+var array<array<int>> historicalPeakStarts = array.new<array<int>>()
+var array<array<int>> historicalPeakEnds = array.new<array<int>>()
+
+const int MAX_HISTORICAL_PROFILES = 50
 const color LINE_CLR = color.new(color = #000000, transp = 100)
 
 if endBar >= startBar
@@ -596,11 +646,10 @@ if endBar >= startBar
     // PEAK DETECTION (CONTINUOUS HIGH-VOLUME ZONES)
     // ══════════════════════════════════════════════════════════════════
     // Detect peaks: continuous regions where volume >= threshold
+    // Store in working arrays (currentPeakStarts/currentPeakEnds)
 
-    var array<int> peakStartRows = array.new<int>()
-    var array<int> peakEndRows = array.new<int>()
-    array.clear(peakStartRows)
-    array.clear(peakEndRows)
+    array.clear(currentPeakStarts)
+    array.clear(currentPeakEnds)
 
     bool inPeak = false
     int peakStart = 0
@@ -615,14 +664,14 @@ if endBar >= startBar
             inPeak := true
         else if not isHighVol and inPeak
             // Peak ends
-            array.push(peakStartRows, peakStart)
-            array.push(peakEndRows, i - 1)
+            array.push(currentPeakStarts, peakStart)
+            array.push(currentPeakEnds, i - 1)
             inPeak := false
 
     // Handle peak extending to last row
     if inPeak
-        array.push(peakStartRows, peakStart)
-        array.push(peakEndRows, flashProf.buckets - 1)
+        array.push(currentPeakStarts, peakStart)
+        array.push(currentPeakEnds, flashProf.buckets - 1)
 
     if maxVol > 0
         series float barWidth  = (endBar - startBar + 1) * profWidth / 100.0
@@ -795,30 +844,93 @@ if endBar >= startBar
         array.push(allBoxes, newBox)
 
     // ══════════════════════════════════════════════════════════════════
-    // PEAK RECTANGLE RENDERING
+    // PEAK RECTANGLE RENDERING (TWO-PHASE)
     // ══════════════════════════════════════════════════════════════════
-    // This section draws red rectangles around detected high-volume peak
-    // zones where volume exceeds the calculated threshold. Each peak is
-    // a continuous region of rows with volume >= volumeThreshold.
+    // This section renders peak rectangles in two phases:
+    // Phase 1: Historical profiles (completed profiles from past anchor changes)
+    // Phase 2: Current profile (developing profile)
     //
     // Peak Detection Logic:
     // - Peaks are continuous zones where row volume >= threshold
     // - Multiple peaks can exist in a single profile
-    // - Peaks extend forward by peakExtensionBars from profile end
+    // - Historical peaks extend to profileEnd + peakExtensionBars
+    // - Current peaks extend to bar_index + peakExtensionBars
     //
     // Integration Points:
     // - Uses existing allBoxes array for FIFO management
-    // - Coordinates from startBar and peakExtensionBars
-    // - Price boundaries from flashProf.getBktBnds()
+    // - Historical data from historicalStartBars/EndBars/PeakStarts/PeakEnds
+    // - Current data from currentPeakStarts/currentPeakEnds
     // ══════════════════════════════════════════════════════════════════
 
     if showPeakRect and barstate.islast
-        int numPeaks = array.size(peakStartRows)
+        // ══════════════════════════════════════════════════════════════════
+        // PHASE 1: RENDER HISTORICAL PROFILE PEAKS
+        // ══════════════════════════════════════════════════════════════════
+        // Loop through all stored historical profiles and render their peaks
 
-        for peakIdx = 0 to numPeaks - 1
+        int numHistoricalProfiles = array.size(historicalStartBars)
+
+        for profIdx = 0 to numHistoricalProfiles - 1
+            int histStartBar = array.get(historicalStartBars, profIdx)
+            int histEndBar = array.get(historicalEndBars, profIdx)
+            array<int> histPeakStarts = array.get(historicalPeakStarts, profIdx)
+            array<int> histPeakEnds = array.get(historicalPeakEnds, profIdx)
+
+            int numPeaks = array.size(histPeakStarts)
+
+            // Render each peak for this historical profile
+            for peakIdx = 0 to numPeaks - 1
+                // Check box limit before creating
+                if array.size(allBoxes) >= MAX_BOXES - 10
+                    box.delete(array.shift(allBoxes))
+
+                int startRow = array.get(histPeakStarts, peakIdx)
+                int endRow = array.get(histPeakEnds, peakIdx)
+
+                // Get price boundaries using flashProf as reference
+                // Note: This assumes historical profiles have similar bucket structure
+                if endRow < flashProf.buckets and startRow < flashProf.buckets
+                    [topPrice, _] = flashProf.getBktBnds(endRow)
+                    [_, bottomPrice] = flashProf.getBktBnds(startRow)
+
+                    // Historical peaks extend from profile start to end + extension
+                    int leftBar = histStartBar
+                    int rightBar = histEndBar + peakExtensionBars
+
+                    box peakBox = box.new(
+                      left   = leftBar,
+                      top    = topPrice,
+                      right  = rightBar,
+                      bottom = bottomPrice,
+
+                      // Visual styling
+                      border_color = peakRectColor,
+                      border_width = peakRectBorderWidth,
+                      border_style = line.style_solid,
+
+                      bgcolor      = peakRectFillColor,
+
+                      // Configuration
+                      xloc         = xloc.bar_index,
+                      extend       = extend.none)
+
+                    array.push(allBoxes, peakBox)
+
+        // ══════════════════════════════════════════════════════════════════
+        // PHASE 2: RENDER CURRENT PROFILE PEAKS
+        // ══════════════════════════════════════════════════════════════════
+        // Render peaks for the currently developing profile
+
+        int numCurrentPeaks = array.size(currentPeakStarts)
+
+        for peakIdx = 0 to numCurrentPeaks - 1
+            // Check box limit before creating
+            if array.size(allBoxes) >= MAX_BOXES - 10
+                box.delete(array.shift(allBoxes))
+
             // Get peak boundaries (row indices)
-            int startRow = array.get(peakStartRows, peakIdx)
-            int endRow = array.get(peakEndRows, peakIdx)
+            int startRow = array.get(currentPeakStarts, peakIdx)
+            int endRow = array.get(currentPeakEnds, peakIdx)
 
             // Get price boundaries for this peak
             // Note: Row 0 is at the bottom, higher row numbers are at the top

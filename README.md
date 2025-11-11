@@ -1,6 +1,6 @@
 # Market Structure Volume Profile (au-MSVP)
 
-![Version](https://img.shields.io/badge/version-1.0.1-blue)
+![Version](https://img.shields.io/badge/version-1.0.2-blue)
 ![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-brightgreen)
 ![License](https://img.shields.io/badge/license-MPL--2.0-orange)
 
@@ -133,7 +133,13 @@ This indicator uses the following Pine Script libraries:
 
 See [CHANGELOG.md](changelog/CHANGELOG.md) for detailed version history.
 
-**Current Version: 1.0.1** (2025-01-11)
+**Current Version: 1.0.2** (2025-01-11)
+- Extended peak rectangles to historical volume profiles
+- Peak rectangles now render across all past profiles (up to 50)
+- Automatic capture of peak data on anchor changes
+- FIFO memory management for efficient historical tracking
+
+**Version 1.0.1** (2025-01-11)
 - Added peak rectangle highlighting feature
 - Rectangles automatically identify high-volume zones (≥50% of max volume)
 - Fully customizable colors, border width, and extension distance
