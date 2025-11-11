@@ -27,32 +27,42 @@ Automatically captures and renders peak rectangles for up to 50 historical volum
 
 ### Data Structure Architecture
 
+**UPDATED v1.0.2.1: Flattened Array Architecture (Pine Script v6 Compatible)**
+
 ```pine
-// Historical profile boundary storage (Lines 565-566)
-var array<int> historicalStartBars = array.new<int>()
-var array<int> historicalEndBars = array.new<int>()
+// Profile metadata (Lines 616-619)
+var array<int> profileStartBars = array.new<int>()     // Profile boundaries
+var array<int> profileEndBars = array.new<int>()
+var array<int> profilePeakCounts = array.new<int>()    // Number of peaks per profile
+var array<int> profilePeakStartIdx = array.new<int>()  // Starting index in flattened arrays
 
-// Nested arrays for peak data per profile (Lines 567-568)
-var array<array<int>> historicalPeakStarts = array.new<array<int>>()
-var array<array<int>> historicalPeakEnds = array.new<array<int>>()
+// Flattened peak data - all peaks concatenated (Lines 622-623)
+var array<int> allPeakStartRows = array.new<int>()
+var array<int> allPeakEndRows = array.new<int>()
 
-// Working arrays for current profile (Lines 501-502)
+// Working arrays for current profile (Lines 502-503)
 var array<int> currentPeakStarts = array.new<int>()
 var array<int> currentPeakEnds = array.new<int>()
 
-// Configuration
+// Configuration (Line 148)
 const int MAX_HISTORICAL_PROFILES = 50
 ```
 
-### Capture Logic (Lines 509-543)
+**Note:** Pine Script v6 does not support nested arrays. This implementation uses a flattened array architecture where all peak data is stored in single-level arrays with index mapping for retrieval.
+
+### Capture Logic (Lines 510-552)
 
 When profile anchor changes (prfReset = true):
 
-1. **Deep Copy**: Peak arrays copied using `array.copy()` to prevent reference sharing
-2. **Store Metadata**: Profile boundaries and peaks pushed to historical arrays
-3. **FIFO Cleanup**: If exceeding 50 profiles, oldest is removed with synchronized array operations
-4. **Box Deletion**: Associated boxes deleted when removing oldest profile
-5. **Reset Working Arrays**: Current peak arrays cleared for new profile
+1. **Store Profile Boundaries**: `profileStartBars` and `profileEndBars` arrays
+2. **Record Peak Count**: Number of peaks stored in `profilePeakCounts`
+3. **Store Starting Index**: Current size of `allPeakStartRows` stored in `profilePeakStartIdx`
+4. **Flatten Peak Data**: Loop through peaks and append to `allPeakStartRows` and `allPeakEndRows`
+5. **FIFO Cleanup**: If exceeding 50 profiles, oldest is removed with synchronized operations
+6. **Box Deletion**: Associated boxes deleted when removing oldest profile
+7. **Reset Working Arrays**: Current peak arrays cleared for new profile
+
+**Key Advantage:** Flattened architecture eliminates nested arrays (not supported in Pine Script v6) while maintaining O(1) index-based access using `profilePeakStartIdx[i] + peakOffset`.
 
 ### Two-Phase Rendering (Lines 847-920)
 
@@ -206,58 +216,90 @@ Implementation methodology: Claude Code with SPARC development workflow
 
 ## Technical Deep Dive
 
-### Parallel Array Synchronization
+### Flattened Array Synchronization
 
-All historical data maintained across 4 parallel arrays:
+All historical data maintained across 6 parallel arrays using flattened architecture:
+
+**Profile Metadata Arrays (one entry per profile):**
 ```pine
-historicalStartBars[i]    → Profile start boundary
-historicalEndBars[i]      → Profile end boundary
-historicalPeakStarts[i]   → Array of peak start rows for profile i
-historicalPeakEnds[i]     → Array of peak end rows for profile i
+profileStartBars[i]     → Profile i start boundary
+profileEndBars[i]       → Profile i end boundary
+profilePeakCounts[i]    → Number of peaks in profile i
+profilePeakStartIdx[i]  → Starting index in flattened arrays for profile i peaks
+```
+
+**Flattened Peak Data Arrays (concatenated for all profiles):**
+```pine
+allPeakStartRows[profilePeakStartIdx[i] + j]  → Start row for peak j of profile i
+allPeakEndRows[profilePeakStartIdx[i] + j]    → End row for peak j of profile i
 ```
 
 **Synchronization Rules:**
-- All arrays must have same size at all times
-- Remove operations must occur at same index across all arrays
-- Push operations must occur simultaneously for profile metadata
+- Metadata arrays must have same size (one entry per profile)
+- Flattened arrays grow by `profilePeakCounts[i]` entries per profile
+- FIFO cleanup removes from START of all arrays synchronously
+- Index mapping: `peakStartIdx + peakOffset` provides O(1) access
 
-### Deep Copy Rationale
+### Flattened Array Rationale
 
-Using `array.copy()` prevents reference sharing:
+**Why Flattened Arrays Instead of Nested Arrays?**
+
+Pine Script v6 does not support nested arrays (`array<array<int>>`). The flattened architecture solves this:
+
 ```pine
-// ❌ WRONG: Reference shared between current and historical
-historicalPeakStarts.push(currentPeakStarts)
+// ❌ NOT SUPPORTED: Nested arrays
+var array<array<int>> historicalPeakStarts = array.new<array<int>>()
+array.push(historicalPeakStarts, currentPeakStarts)  // Compilation error
 
-// ✅ CORRECT: Independent copy created
-array<int> peakStartsCopy = array.copy(currentPeakStarts)
-historicalPeakStarts.push(peakStartsCopy)
+// ✅ CORRECT: Flattened arrays with index mapping
+var array<int> allPeakStartRows = array.new<int>()
+var array<int> profilePeakStartIdx = array.new<int>()
+
+// Store starting index, then append peaks
+array.push(profilePeakStartIdx, array.size(allPeakStartRows))
+for i = 0 to peakCount - 1
+    array.push(allPeakStartRows, array.get(currentPeakStarts, i))
+
+// Retrieve using index arithmetic
+int startIdx = array.get(profilePeakStartIdx, profileIdx)
+int peakRow = array.get(allPeakStartRows, startIdx + peakOffset)
 ```
 
-Without deep copy, clearing `currentPeakStarts` would also clear historical data.
+**Benefits:**
+- ✅ Pine Script v6 compliant (no nested arrays)
+- ✅ O(1) access time with simple arithmetic
+- ✅ Memory efficient (no wasted space)
+- ✅ Cache-friendly (sequential data layout)
 
 ### FIFO Implementation Details
 
 ```pine
-if array.size(historicalStartBars) > MAX_HISTORICAL_PROFILES
-    // Synchronized removal from all parallel arrays
-    array.shift(historicalStartBars)     // Remove oldest start
-    array.shift(historicalEndBars)       // Remove oldest end
+if array.size(profileStartBars) > MAX_HISTORICAL_PROFILES
+    // Get oldest profile's peak count FIRST
+    int oldestPeakCount = array.shift(profilePeakCounts)
 
-    // Nested array removal
-    array<int> removedStarts = array.shift(historicalPeakStarts)
-    array<int> removedEnds = array.shift(historicalPeakEnds)
+    // Synchronized removal from metadata arrays
+    array.shift(profileStartBars)     // Remove oldest start
+    array.shift(profileEndBars)       // Remove oldest end
+    array.shift(profilePeakStartIdx)  // Remove oldest index
+
+    // Remove oldest peaks from flattened arrays
+    for i = 0 to oldestPeakCount - 1
+        if array.size(allPeakStartRows) > 0
+            array.shift(allPeakStartRows)
+            array.shift(allPeakEndRows)
 
     // Delete associated boxes
-    int boxesToRemove = array.size(removedStarts)
-    for i = 0 to math.min(boxesToRemove, array.size(allBoxes)) - 1
+    for i = 0 to math.min(oldestPeakCount, array.size(allBoxes)) - 1
         if array.size(allBoxes) > 0
             box.delete(array.shift(allBoxes))
 ```
 
-**Note**: Box-to-profile mapping is approximate (FIFO assumption). This is acceptable because:
-- Oldest boxes correspond to oldest profiles in practice
-- Over-deletion is prevented by `math.min()` check
-- 10-box buffer provides cleanup headroom
+**Key Points:**
+- Peak count determines how many entries to remove from flattened arrays
+- Box deletion matches peak count (one box per peak)
+- FIFO order maintained: shift removes from START of arrays
+- Bounds checking prevents over-deletion
 
 ---
 

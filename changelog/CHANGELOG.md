@@ -5,19 +5,43 @@ All notable changes to the Market Structure Volume Profile (au-MSVP) indicator w
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2.1] - 2025-01-11 (Hotfix)
+
+### Fixed
+- **Pine Script v6 Compliance**: Replaced nested arrays with flattened array architecture
+  - Pine Script v6 does not support `array<array<int>>` (nested arrays)
+  - Implemented flattened arrays with index mapping for O(1) access
+  - All historical peak data stored in single-level arrays
+
+### Changed
+- **Data Structure Redesign** (Lines 615-623):
+  - `profilePeakCounts` - Tracks number of peaks per profile
+  - `profilePeakStartIdx` - Starting index for each profile's peaks in flattened arrays
+  - `allPeakStartRows` / `allPeakEndRows` - Concatenated peak data across all profiles
+- **Index-Based Access**: Peak retrieval uses `peakStartIdx + peakOffset` arithmetic
+- **FIFO Cleanup Updated**: Removes `oldestPeakCount` entries from flattened arrays
+
+### Technical Details
+- Line 148: MAX_HISTORICAL_PROFILES moved to CONSTANTS section
+- Lines 502-503: Working arrays declared before usage
+- Lines 510-552: Historical capture logic updated for flattened architecture
+- Lines 615-623: Flattened array declarations (6 arrays total)
+- Lines 881-920: Historical rendering uses index arithmetic
+
 ## [1.0.2] - 2025-01-11
 
 ### Added
 - **Historical Profile Peak Tracking**: Peak rectangles now render across all historical volume profiles
   - Stores up to 50 historical profiles with peak data
-  - Automatic capture of peak arrays on anchor changes (Swing/Structure/Delta)
+  - Automatic capture of peak data on anchor changes (Swing/Structure/Delta)
   - Two-phase rendering: historical profiles first, then current profile
   - Historical peaks extend to profile end + extension bars
-- **Deep Copy Implementation**: Peak arrays deep copied using array.copy() when storing historical data
-- **FIFO Memory Management**: Synchronized cleanup across 4 parallel arrays
-  - historicalStartBars/EndBars for profile boundaries
-  - historicalPeakStarts/Ends for nested peak data
+- **Flattened Array Architecture**: Pine Script v6-compliant storage system
+  - 6 parallel arrays: 4 metadata + 2 flattened peak arrays
+  - Index mapping provides O(1) access to historical peaks
+- **FIFO Memory Management**: Synchronized cleanup across all parallel arrays
   - Automatic box deletion when removing oldest profiles
+  - Peak count-based cleanup prevents orphaned data
 
 ### Changed
 - Peak detection now uses working arrays (currentPeakStarts/Ends) cleared on each profile reset
@@ -25,16 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Box limit checks moved before each box creation for proactive memory management
 
 ### Technical Details
-- Lines 500-502: Working array declarations
-- Lines 509-543: Historical capture logic on anchor change
-- Lines 564-570: Historical storage array declarations (MAX_HISTORICAL_PROFILES = 50)
-- Lines 601-624: Peak detection stores in working arrays
-- Lines 847-920: Two-phase rendering implementation
+- Lines 502-503: Working array declarations
+- Lines 510-552: Historical capture logic with flattened array storage
+- Lines 615-623: Historical storage array declarations (MAX_HISTORICAL_PROFILES = 50)
+- Lines 881-920: Two-phase rendering with index arithmetic
 
 ### Performance
 - O(n × m) rendering where n = profiles (≤50), m = peaks per profile (typically 2-5)
 - Typical box count: 50 profiles × 3 peaks = 150 boxes (30% of 500 limit)
 - FIFO cleanup maintains 10-box buffer for burst protection
+- Flattened arrays provide cache-friendly sequential access
 
 ## [1.0.1] - 2025-01-11
 

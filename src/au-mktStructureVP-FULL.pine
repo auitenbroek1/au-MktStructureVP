@@ -145,6 +145,7 @@ import AustrianTradingMachine/LibVPrf/1 as LibVPrf
 const int MAX_POLYLINES = 100
 const int MAX_POINTS    = 10000
 const int MAX_BOXES     = 500
+const int MAX_HISTORICAL_PROFILES = 50
 
 // ── USER INPUTS ──────────────────────────────────────────────────────────────
 const string gB = "basic"
@@ -507,34 +508,42 @@ if prfReset
         endBar   := bar_index - 1 - delay
 
         // ══════════════════════════════════════════════════════════════════
-        // HISTORICAL PROFILE CAPTURE
+        // HISTORICAL PROFILE CAPTURE (Flattened Array Architecture)
         // ══════════════════════════════════════════════════════════════════
-        // Capture completed profile data when anchor changes (skip first profile)
 
         if array.size(currentPeakStarts) > 0
-            // Deep copy peak arrays
-            array<int> peakStartsCopy = array.copy(currentPeakStarts)
-            array<int> peakEndsCopy = array.copy(currentPeakEnds)
+            // Store profile boundaries
+            array.push(profileStartBars, startBar)
+            array.push(profileEndBars, endBar)
 
-            // Store profile boundaries and peaks
-            array.push(historicalStartBars, startBar)
-            array.push(historicalEndBars, endBar)
-            array.push(historicalPeakStarts, peakStartsCopy)
-            array.push(historicalPeakEnds, peakEndsCopy)
+            // Store peak count and starting index for this profile
+            int peakCount = array.size(currentPeakStarts)
+            array.push(profilePeakCounts, peakCount)
+            array.push(profilePeakStartIdx, array.size(allPeakStartRows))
+
+            // Append peaks to flattened arrays
+            for i = 0 to peakCount - 1
+                array.push(allPeakStartRows, array.get(currentPeakStarts, i))
+                array.push(allPeakEndRows, array.get(currentPeakEnds, i))
 
             // FIFO cleanup if exceeding limit
-            if array.size(historicalStartBars) > MAX_HISTORICAL_PROFILES
-                array.shift(historicalStartBars)
-                array.shift(historicalEndBars)
+            if array.size(profileStartBars) > MAX_HISTORICAL_PROFILES
+                // Get oldest profile's peak count
+                int oldestPeakCount = array.shift(profilePeakCounts)
 
-                // Delete associated peak arrays
-                array<int> removedStarts = array.shift(historicalPeakStarts)
-                array<int> removedEnds = array.shift(historicalPeakEnds)
+                // Remove oldest profile data
+                array.shift(profileStartBars)
+                array.shift(profileEndBars)
+                array.shift(profilePeakStartIdx)
 
-                // Delete associated boxes (approximate cleanup)
-                // Note: We don't have direct box-to-profile mapping, so we rely on FIFO
-                int boxesToRemove = array.size(removedStarts)
-                for i = 0 to math.min(boxesToRemove, array.size(allBoxes)) - 1
+                // Remove oldest peaks from flattened arrays
+                for i = 0 to oldestPeakCount - 1
+                    if array.size(allPeakStartRows) > 0
+                        array.shift(allPeakStartRows)
+                        array.shift(allPeakEndRows)
+
+                // Delete associated boxes
+                for i = 0 to math.min(oldestPeakCount, array.size(allBoxes)) - 1
                     if array.size(allBoxes) > 0
                         box.delete(array.shift(allBoxes))
 
@@ -603,13 +612,16 @@ series int offset = profAnchor == ProfAnchor.swing ? 0 : pivRi
 var array<polyline> allPolylines = array.new<polyline>()
 var array<box> allBoxes = array.new<box>()
 
-// Historical profile peak storage
-var array<int> historicalStartBars = array.new<int>()
-var array<int> historicalEndBars = array.new<int>()
-var array<array<int>> historicalPeakStarts = array.new<array<int>>()
-var array<array<int>> historicalPeakEnds = array.new<array<int>>()
+// Historical profile storage using flattened arrays
+var array<int> profileStartBars = array.new<int>()        // Profile boundaries
+var array<int> profileEndBars = array.new<int>()
+var array<int> profilePeakCounts = array.new<int>()       // Number of peaks per profile
+var array<int> profilePeakStartIdx = array.new<int>()     // Starting index in flattened arrays
 
-const int MAX_HISTORICAL_PROFILES = 50
+// Flattened peak data (all peaks concatenated)
+var array<int> allPeakStartRows = array.new<int>()
+var array<int> allPeakEndRows = array.new<int>()
+
 const color LINE_CLR = color.new(color = #000000, transp = 100)
 
 if endBar >= startBar
@@ -866,29 +878,25 @@ if endBar >= startBar
         // ══════════════════════════════════════════════════════════════════
         // PHASE 1: RENDER HISTORICAL PROFILE PEAKS
         // ══════════════════════════════════════════════════════════════════
-        // Loop through all stored historical profiles and render their peaks
-
-        int numHistoricalProfiles = array.size(historicalStartBars)
+        int numHistoricalProfiles = array.size(profileStartBars)
 
         for profIdx = 0 to numHistoricalProfiles - 1
-            int histStartBar = array.get(historicalStartBars, profIdx)
-            int histEndBar = array.get(historicalEndBars, profIdx)
-            array<int> histPeakStarts = array.get(historicalPeakStarts, profIdx)
-            array<int> histPeakEnds = array.get(historicalPeakEnds, profIdx)
-
-            int numPeaks = array.size(histPeakStarts)
+            int histStartBar = array.get(profileStartBars, profIdx)
+            int histEndBar = array.get(profileEndBars, profIdx)
+            int peakCount = array.get(profilePeakCounts, profIdx)
+            int peakStartIndex = array.get(profilePeakStartIdx, profIdx)
 
             // Render each peak for this historical profile
-            for peakIdx = 0 to numPeaks - 1
+            for peakIdx = 0 to peakCount - 1
                 // Check box limit before creating
                 if array.size(allBoxes) >= MAX_BOXES - 10
                     box.delete(array.shift(allBoxes))
 
-                int startRow = array.get(histPeakStarts, peakIdx)
-                int endRow = array.get(histPeakEnds, peakIdx)
+                // Get peak data from flattened arrays
+                int startRow = array.get(allPeakStartRows, peakStartIndex + peakIdx)
+                int endRow = array.get(allPeakEndRows, peakStartIndex + peakIdx)
 
                 // Get price boundaries using flashProf as reference
-                // Note: This assumes historical profiles have similar bucket structure
                 if endRow < flashProf.buckets and startRow < flashProf.buckets
                     [topPrice, _] = flashProf.getBktBnds(endRow)
                     [_, bottomPrice] = flashProf.getBktBnds(startRow)
@@ -902,15 +910,10 @@ if endBar >= startBar
                       top    = topPrice,
                       right  = rightBar,
                       bottom = bottomPrice,
-
-                      // Visual styling
                       border_color = peakRectColor,
                       border_width = peakRectBorderWidth,
                       border_style = line.style_solid,
-
                       bgcolor      = peakRectFillColor,
-
-                      // Configuration
                       xloc         = xloc.bar_index,
                       extend       = extend.none)
 
