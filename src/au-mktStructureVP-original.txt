@@ -1,0 +1,682 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © AustrianTradingMachine
+
+// ── HEADER ───────────────────────────────────────────────────────────────────
+// @version=6
+//
+// @description   This indicator visualizes volume profiles that are dynamically
+//                anchored to market structure events, rather than fixed time
+//                intervals. It builds these profiles using high-resolution
+//                intra-bar data to provide a precise view of where value is
+//                established during critical market phases.
+//
+//                Key Features:
+//
+//                1.  **Event-Based Profile Anchoring:** The indicator starts a new
+//                    profile based on one of three user-selected events
+//                    ('Profile Anchor'):
+//                    - **Swing:** A new profile begins when the 'impulse baseline'
+//                      (derived from intra-bar delta) changes. This baseline
+//                      adjusts when a new **price pivot** is confirmed: When a
+//                      price **high** forms, the baseline moves to the **lower**
+//                      of its previous level or the peak delta (max of
+//                      delta O/C) at the pivot. When a price **low** forms, it
+//                      moves to the **higher** of its previous level or the
+//                      trough delta (min of delta O/C) at the pivot.
+//                    - **Structure:** A new profile begins immediately on the bar
+//                      that *confirms* a market structure break (e.g., a new HH
+//                      or LL, based on a sequence of price pivots).
+//                    - **Delta:** A new profile begins immediately on the bar
+//                      that *confirms* a break in the *cumulative delta's*
+//                      market structure (e.g., a new HH or LL in the delta).
+//                    Both 'Swing' and 'Delta' anchors are derived from the same
+//                    **continuous (non-resetting) Cumulative Volume Profile Delta (CVPD)**,
+//                    which is built from the intra-bar statistical analysis.
+//
+//                2.  **Statistical Profile Engine:** For each bar in the anchored
+//                    period, the indicator builds a volume profile on a lower
+//                    'Intra-Bar Timeframe'. Instead of simple tick counting, it
+//                    uses advanced statistical models:
+//                    - **Allocation ('Allot model'):** 'PDF' (Probability Density
+//                      Function) distributes volume proportionally across the
+//                      bar's range based on an assumed statistical model
+//                      (e.g., T4-Skew). 'Classic' assigns all volume to
+//                      the close.
+//                    - **Buy/Sell Split ('Volume Estimator'):** 'Dynamic'
+//                      applies a model that analyzes candle wicks and
+//                      recent trend to estimate buy/sell pressure. 'Classic'
+//                      classifies all volume based on the candle color.
+//
+//                3.  **Visualization & Lag:** The indicator plots the final
+//                    profile (as a polygon) and the developing statistical
+//                    lines (POC, VA, VWAP, StdDev).
+//                    - **Note on Lag:** All anchor events require `Pivot Right Bars`
+//                      for confirmation.
+//                    - In 'Structure' and 'Delta' mode, the developing lines
+//                      (POC, VA, etc.) are plotted using a **non-repainting**
+//                      method (showing the value from `pivRi` bars ago).
+//                    - In 'Swing' mode, the profile is plotted **retroactively**,
+//                      starting *from the bar where the pivot occurred*. The
+//                      developing lines are also plotted with this full
+//                      `pivRi` lag to align with the past data.
+//
+//                4.  **Flexible Display Modes:** The finalized profile can be displayed
+//                    in three ways: 'Up/Down' (buy vs. sell), 'Total' (combined
+//                    volume), and 'Delta' (net difference).
+//
+//                5.  **Dynamic Row Sizing:** Includes an option ('Rows per Percent')
+//                    to automatically adjust the number of profile rows (buckets)
+//                    based on the profile's price range.
+//
+//                6.  **Integrated Alerts:** Includes 13 alerts that trigger for:
+//                    - A new profile reset ('Profile was resetted').
+//                    - Price crossing any of the 6 developing levels (POC,
+//                      VA High/Low, VWAP, StdDev High/Low).
+//                    - **Alert Lag Assumption:** In 'Swing' mode, alerts are
+//                      delayed to match the retroactively plotted lines.
+//                      In 'Structure' and 'Delta' modes, alerts fire in
+//                      **real-time** based on the *current price* crossing
+//                      the *current (repainting)* value of the metric, which
+//                      may **differ from the non-repainting plotted line.**
+//
+//                **Caution: Real-Time Data Behavior (Intra-Bar Repainting)**
+//                This indicator uses high-resolution intra-bar data. As a result, the
+//                values on the **current, unclosed bar** (the real-time bar) will
+//                update dynamically as new intra-bar data arrives. This includes
+//                the values used for real-time alerts in 'Structure' and
+//                'Delta' modes.
+//
+//                ---
+//
+//                **DISCLAIMER**
+//
+//                1.  **For Informational/Educational Use Only:** This indicator is
+//                    provided for informational and educational purposes only. It does
+//                    not constitute financial, investment, or trading advice, nor is
+//                    it a recommendation to buy or sell any asset.
+//
+//                2.  **Use at Your Own Risk:** All trading decisions you make based on
+//                    the information or signals generated by this indicator are made
+//                    solely at your own risk.
+//
+//                3.  **No Guarantee of Performance:** Past performance is not an
+//                    indicator of future results. The author makes no guarantee
+//                    regarding the accuracy of the signals or future profitability.
+//
+//                4.  **No Liability:** The author shall not be held liable for any
+//                    financial losses or damages incurred directly or indirectly from
+//                    the use of this indicator.
+//
+//                5.  **Signals Are Not Recommendations:** The alerts and visual signals
+//                    (e.g., crossovers) generated by this tool are not direct
+//                    recommendations to buy or sell. They are technical observations
+//                    for your own analysis and consideration.
+indicator(
+  title               = "Market Structure Volume Profile",
+  shorttitle          = "au-MSVP",
+  overlay             = true,
+  max_bars_back       = 500,
+  max_polylines_count = 100)
+
+// ── LOG ──────────────────────────────────────────────────────────────────────
+// 2025-11-01 0.1.0
+// Initial release of indicator
+
+// ── CONTROL ──────────────────────────────────────────────────────────────────
+const string NAME    = "MSVP"
+const string VERSION = "0.1.0"
+const string STATUS  = "rel"        // "rel", "dev", "dep"
+
+if barstate.isfirst
+    switch STATUS
+        "rel" => log.info("Indicator '" + NAME + " " + VERSION + "' released")
+        "dev" => log.warning("Indicator '" + NAME + " " + VERSION + "' in development")
+        "dep" => log.error("Indicator '" + NAME + " " + VERSION + "' deprecated!")
+        => runtime.error("Undefined status of indicator " + NAME + " " + VERSION)
+
+// ── IMPORTS ──────────────────────────────────────────────────────────────────
+import AustrianTradingMachine/LibTmFr/1 as LibTmFr
+import AustrianTradingMachine/LibBrSt/1 as LibBrSt
+import AustrianTradingMachine/LibPvot/1 as LibPvot
+import AustrianTradingMachine/LibVPrf/1 as LibVPrf
+
+// ── CONSTANTS ────────────────────────────────────────────────────────────────
+const int MAX_POLYLINES = 100
+const int MAX_POINTS    = 10000
+
+// ── USER INPUTS ──────────────────────────────────────────────────────────────
+const string gB = "basic"
+enum ProfAnchor
+    swing     = "Swing"
+    structure = "Structure"
+    delta     = "Delta"
+ProfAnchor profAnchor = input.enum(
+  title   = "Profile Anchor",
+  group   = gB,
+  defval  = ProfAnchor.swing,
+  tooltip = "Selects the method for starting a new volume profile:\n\n
+             Swing: A new profile begins *at the bar* of each confirmed price swing. 
+             Since a swing is only confirmed 'Pivot Right Bars' later, the entire profile
+             calculation and its developing lines (POC, VA) are delayed to align with the swing's
+             origin bar.\n\n
+             Structure: A new profile begins *at the bar* where the market structure break is
+             confirmed. The break itself is confirmed 'Pivot Right Bars' after the event, but
+             the profile calculation starts immediately from that new confirmation bar and
+             develops in real-time.\n\n
+             Delta: A new profile begins *at the bar* where the cumulative delta trend break is
+             confirmed.  This also starts immediately from the confirmation bar and develops in real-time.")
+const string gL = "ltf"
+bool ctmLTF = input.bool(
+  title  = "Use custom timeframe",
+  group  = gL,
+  defval = false)
+string manLTF = input.timeframe(
+  title  = "Intra-Bar Timeframe",
+  group  = gL,
+  defval = "")
+
+const string gV = "volume profile"
+bool rowDyn = input.bool(
+  title   = "Rows per Percent",
+  group   = gV,
+  defval  = true,
+  tooltip = "If enabled, the 'Row Number' input defines the target number of rows per 1% of the profile's
+             price range. The total rows are dynamically adjusted based on the profile's height, keeping visual
+             density consistent. If disabled, 'Row Number' is the fixed total count.")
+int rowNum = input.int(
+  title   = "Row Number",
+  group   = gV,
+  defval  = 24, minval = 1, step = 1,
+  tooltip = "Number of price levels (buckets) for the volume profile. A higher value
+             means finer resolution but is limited by the symbol's minimum tick size.")
+int valArea = input.int(
+  title   = "Value Area",
+  group   = gV,
+  defval  = 70, minval = 0, step = 1, maxval = 100,
+  tooltip = "The percentage of the period's total volume used to calculate the Value Area (VA). The VA
+             highlights the price range where the majority of trading occurred, centered around the Point
+             of Control (POC).")
+LibVPrf.AllotMode alltMod = input.enum(
+  title   = "Allot model",
+  group   = gV,
+  defval  = LibVPrf.AllotMode.pdf,
+  tooltip = "Determines how a candle's volume is distributed across the price levels.\n
+             \nCLASSIC: Assigns the entire volume to the level containing the close price.\n
+             \nPDF: Distributes the volume proportionally to the assumed price distribution
+             (Probability Density Function) within the candle.")
+LibBrSt.PriceEst prcEst = input.enum(
+  title   = "Price Estimator",
+  group   = gV,
+  defval  = LibBrSt.PriceEst.t4Skew,
+  tooltip = "Selects the statistical model (Price Density Function) used to estimate the price
+             distribution within a candle. This is only relevant when 'Profile model' is set to 'PDF'.")
+int intStp = input.int(
+  title   = "PDF Integration Steps",
+  group   = gV,
+  defval  = 20, minval = 1, step = 1,
+  tooltip = "Number of (Simpson) integration steps for calculating the volume distribution in PDF mode.
+             Higher values lead to a more accurate calculation but may slightly affect the indicator's
+             performance.")
+LibVPrf.SplitMode volEst = input.enum(
+  title   = "Volume Estimator",
+  group   = gV,
+  defval  = LibVPrf.SplitMode.dynamic,
+  tooltip = "Determines how volume is split into Buy and Sell volume.\n\nCLASSIC: Classifies all volume
+             on a level as Buy volume if the candle is green (Close ≥ Open), otherwise as Sell volume.\n
+             \nDYNAMIC: Applies a more complex model that considers the trend and wicks of the candles to
+             dynamically split the buy/sell volume.")
+int trendLen = input.int(
+  title   = "Trend Length",
+  group   = gV,
+  defval  = 3, minval = 1, step = 1, maxval = 5,
+  tooltip = "Lookback period (in candles) for trend determination. This value is only used in the 'DYNAMIC'
+             'Volume Estimator' mode to influence the buy and sell volume split.")
+
+const string gP = "pivot"
+int pivLe = input.int(
+  title   = "Pivot Left Bars",
+  group   = gP,
+  defval  = 10, minval = 1, step = 1,
+  tooltip = "Defines the strength of a pivot. A pivot high must have no higher high for this
+             number of bars to its left (and vice-versa for lows). Higher values result in
+             fewer, but more significant pivot points.")
+int pivRi = input.int(
+  title   = "Pivot Right Bars",
+  group   = gP,
+  defval  = 5, minval = 1, step = 1,
+  tooltip = "Defines the number of confirmation bars. A pivot is only confirmed after this
+             number of bars to its right has closed without breaking the pivot level. Higher
+             values result in more strongly confirmed signals, but with greater lag.")
+float pivTol = input.float(
+  title   = "Pivot Price Tolerance (%)",
+  group   = gP,
+  defval  = 0.05, minval  = 0, step    = 0.01, maxval = 100,
+  tooltip = "Percentage tolerance for comparing pivot prices.\n\nPivots with a price difference WITHIN this
+             tolerance are considered 'equal'")
+
+const string gD = "Display"
+enum VolDisp
+    upDn  = "Up/Down"
+    total = "Total"
+    delta = "Delta"
+VolDisp volDisp = input.enum(
+  title   = "Volume",
+  group   = gD,
+  defval  = VolDisp.upDn)
+float profWidth = input.float(
+  title  = "Width (% of the box)",
+  group  = gD,
+  defval = 100, minval = 1, step = 1, maxval = 100)
+enum ProfSide
+    right = "Right"
+    left  = "Left"
+ProfSide profSide = input.enum(
+  title   = "Display",
+  group   = gD,
+  defval  = ProfSide.left)
+
+const string gC = "color"
+color buyClr = input.color(
+  title  = "Buy Volume",
+  defval = color.new(color = #00332a, transp = 0),
+  group  = gC)
+color sellClr = input.color(
+  title  = "Sell Volume",
+  defval = color.new(color = #801922, transp = 0),
+  group  = gC)
+
+// ── CALCULATION ──────────────────────────────────────────────────────────────
+varip series string chartTF  = timeframe.main_period
+varip series string ibTF     = ctmLTF ? manLTF : LibTmFr.autoLTF(chartTF)
+
+if timeframe.in_seconds(ibTF) >= timeframe.in_seconds(chartTF)
+    runtime.error("Intra-Bar timeframe must be smaller than selected timeframe")
+
+// @function Factory function to create a standardized volume profile object.
+//           Reduces code duplication.
+// @returns  LibVPrf.volProf A new volume profile object.
+createProfile() =>
+    LibVPrf.create(
+      buckets   = rowNum,
+      rangeUp   = 0,
+      rangeLo   = 0,
+      dynamic   = true,
+      valueArea = valArea,
+      allot     = alltMod,
+      estimator = prcEst,
+      cdfSteps  = intStp,
+      split     = volEst,
+      trendLen  = trendLen)
+
+// @function Calculates all necessary values for each intra bar
+// @returns          [arra<float>, arra<float>, series float, ...] A tuple of the result values
+intBarCalc() =>
+    var series bool vldPrd  = false
+    series bool reset       = LibTmFr.isNewPeriod(chartTF)
+    series bool multiple    = LibTmFr.isMultipleTF(chartTF)
+    vldPrd := not multiple ? false : reset ? true : vldPrd
+
+    var LibVPrf.VProf ibProf = createProfile()
+
+    if reset
+        ibProf.clear()
+        ibProf.setRanges(
+          rangeUp = math.max(high, open + (syminfo.mintick/2)),
+          rangeLo = math.min(low,  open - (syminfo.mintick/2)))
+
+    if vldPrd
+        ibProf.addBar()
+        [ibProf.aBuy, ibProf.aSell, ibProf.rangeUp, ibProf.rangeLo, ibProf.cvd, ibProf.cvdHi, ibProf.cvdLo]
+    else
+        [na, na, na, na, na, na, na]
+
+// @function Converts the calculated intra bar values in the selected timeframe
+// @returns  [arra<float>, arra<float>, series float, ...] A tuple of the result values
+ibTFCnvrt() =>
+    request.security(syminfo.tickerid, ibTF, intBarCalc(), barmerge.gaps_off, barmerge.lookahead_off)
+
+[aBuy, aSell, rangeUp, rangeLo, cvd, cvdHi, cvdLo] = ibTFCnvrt()
+
+var LibVPrf.VProf msProf = createProfile()
+LibVPrf.VProf flashProf  = msProf.clone()
+
+var series float CumC = 0
+series float CumO     = CumC
+series float CumH     = CumO + nz(cvdHi)
+series float CumL     = CumO + nz(cvdLo)
+CumC += nz(cvd)
+
+series bool prfReset = false
+series int  delay    = na
+if profAnchor == ProfAnchor.swing
+    delay := pivRi
+
+    series bool pivPrcHi = not na(ta.pivothigh(high, pivLe, pivRi))
+    series bool pivPrcLo = not na(ta.pivotlow (low,  pivLe, pivRi))
+    var series float impulseStart = na
+    if pivPrcHi or pivPrcLo
+        impulseStart := switch pivPrcHi
+            true  => math.min(nz(impulseStart), math.max(CumO[pivRi], CumC[pivRi]))
+            false => math.max(nz(impulseStart), math.min(CumO[pivRi], CumC[pivRi]))
+        
+    if impulseStart != impulseStart[1]
+        prfReset := true
+else if profAnchor == ProfAnchor.structure
+    delay := 0
+
+    [_, _, _, _, _, _, prcTrendState] = LibPvot.marketStructure(
+      highSrc  = high,
+      lowSrc   = low,
+      leftLen  = pivLe,
+      rightLen = pivRi,
+      srcTol   = pivTol)
+      
+    if prcTrendState != prcTrendState[1]
+        prfReset := true
+else if profAnchor == ProfAnchor.delta
+    delay := 0
+
+    [_, _, _, _, _, _, cvdTrendState] = LibPvot.marketStructure(
+      highSrc  = CumH,
+      lowSrc   = CumL,
+      leftLen  = pivLe,
+      rightLen = pivRi,
+      srcTol   = pivTol)
+      
+    if cvdTrendState != cvdTrendState[1]
+        prfReset := true
+
+var series int resetBar = na
+series int     startBar = na
+series int       endBar = na
+if prfReset
+    if not na(resetBar)
+        startBar := resetBar - delay
+        endBar   := bar_index - 1 - delay
+    resetBar := bar_index
+
+    msProf.clear()
+    msProf.setRanges(
+      rangeUp = nz(rangeUp[delay], math.max(high[delay], open[delay] + (syminfo.mintick[delay]/2))),
+      rangeLo = nz(rangeLo[delay], math.min(low[delay],  open[delay] - (syminfo.mintick[delay]/2))))
+
+series float poc    = na
+series float vaUp   = na
+series float vaLo   = na
+series float vwap   = na
+series float stdDev = na
+if not na(aBuy[delay]) and not na(resetBar)
+    msProf.merge(
+      srcABuy    = aBuy[delay],
+      srcASell   = aSell[delay],
+      srcRangeUp = rangeUp[delay],
+      srcRangeLo = rangeLo[delay],
+      srcCvd     = 0,
+      srcCvdHi   = 0,
+      srcCvdLo   = 0)
+
+    if rowDyn
+        msProf.setBuckets(int(rowNum * ((msProf.rangeUp - msProf.rangeLo)/msProf.rangeUp) * 100))
+
+    [_, _poc] = msProf.getPoc()
+    [_, _vaUp, _, _vaLo] = msProf.getVA()
+    [_, _vwap] = msProf.getVwap()
+    poc    := _poc
+    vaUp   := _vaUp
+    vaLo   := _vaLo
+    vwap   := _vwap
+    stdDev := msProf.getStdDev()
+
+if barstate.islast
+    if resetBar == bar_index
+        flashProf := msProf
+    else
+        for i = (delay - 1) to 0
+            if i >= 0
+                flashProf.merge(
+                  srcABuy    = aBuy[i],
+                  srcASell   = aSell[i],
+                  srcRangeUp = rangeUp[i],
+                  srcRangeLo = rangeLo[i],
+                  srcCvd     = 0,
+                  srcCvdHi   = 0,
+                  srcCvdLo   = 0)
+    
+        if rowDyn
+            flashProf.setBuckets(int(rowNum * ((flashProf.rangeUp - flashProf.rangeLo)/flashProf.rangeUp) * 100))
+    
+    endBar   := bar_index
+    startBar := resetBar - delay
+
+series int offset = profAnchor == ProfAnchor.swing ? 0 : pivRi
+
+// ── PLOTTING ─────────────────────────────────────────────────────────────────
+var array<polyline> allPolylines = array.new<polyline>()
+const color LINE_CLR = color.new(color = #000000, transp = 100)
+
+if endBar >= startBar
+    series float maxVol = 0.0
+    for i = 0 to flashProf.buckets - 1
+        series float bVol = flashProf.getBktBuyVol(i)
+        series float sVol = flashProf.getBktSellVol(i)
+        
+        series float currentVol = switch volDisp
+            VolDisp.upDn  => bVol + sVol
+            VolDisp.total => bVol + sVol
+            VolDisp.delta => math.abs(bVol - sVol)
+        
+        maxVol := math.max(maxVol, currentVol)
+
+    if maxVol > 0
+        series float barWidth  = (endBar - startBar + 1) * profWidth / 100.0
+        series int   xBase     = profSide == ProfSide.left ? startBar : endBar
+        series int   direction = profSide == ProfSide.left ? 1 : -1
+
+        series int reqPolyLn = volDisp == VolDisp.total ? 1 : 2
+        while array.size(allPolylines) > MAX_POLYLINES - reqPolyLn
+            polyline.delete(array.shift(allPolylines))
+
+        array<chart.point> bPoints = array.new<chart.point>()
+        array<chart.point> sPoints = array.new<chart.point>()
+
+        [firstBktUp, firstBktLo] = flashProf.getBktBnds(0)
+        series float yFirst = firstBktLo + (firstBktUp - firstBktLo) * 0.025
+
+        [lastBktUp, lastBktLo] = flashProf.getBktBnds(flashProf.buckets - 1)
+        series float yLast = lastBktUp - (lastBktUp - lastBktLo) * 0.025
+        
+        switch volDisp
+            VolDisp.upDn =>
+                array.push(bPoints, chart.point.from_index(xBase, yFirst))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol   = flashProf.getBktBuyVol(i)
+                    series float buyWidth = barWidth * (buyVol / maxVol)
+                    series float xEnd     = xBase + direction * buyWidth
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktLo))
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktUp))
+                array.push(bPoints, chart.point.from_index(xBase, yLast))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol     = flashProf.getBktBuyVol(i)
+                    series float sellVol    = flashProf.getBktSellVol(i)
+                    series float buyWidth   = barWidth * (buyVol / maxVol)
+                    series float sellWidth  = barWidth * (sellVol / maxVol)
+                    series float sellXStart = xBase + direction * buyWidth
+                    series float sellXEnd   = sellXStart + direction * sellWidth
+                    array.push(sPoints, chart.point.from_index(int(sellXEnd), bktLo))
+                    array.push(sPoints, chart.point.from_index(int(sellXEnd), bktUp))
+                for i = flashProf.buckets - 1 to 0
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol     = flashProf.getBktBuyVol(i)
+                    series float buyWidth   = barWidth * (buyVol / maxVol)
+                    series float sellXStart = xBase + direction * buyWidth
+                    array.push(sPoints, chart.point.from_index(int(sellXStart), bktUp))
+                    array.push(sPoints, chart.point.from_index(int(sellXStart), bktLo))
+            VolDisp.total =>
+                array.push(bPoints, chart.point.from_index(xBase, yFirst))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float totalVol   = flashProf.getBktBuyVol(i) + flashProf.getBktSellVol(i)
+                    series float totalWidth = barWidth * (totalVol / maxVol)
+                    series float xEnd       = xBase + direction * totalWidth
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktLo))
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktUp))
+                array.push(bPoints, chart.point.from_index(xBase, yLast))
+            VolDisp.delta =>
+                array.push(bPoints, chart.point.from_index(xBase, yFirst))
+                array.push(sPoints, chart.point.from_index(xBase, yFirst))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol     = flashProf.getBktBuyVol(i)
+                    series float sellVol    = flashProf.getBktSellVol(i)
+                    series float deltaVol   = buyVol - sellVol
+                    series float deltaWidth = barWidth * (math.abs(deltaVol) / maxVol)
+                    if deltaVol >= 0
+                        series float xEnd = xBase + direction * deltaWidth
+                        array.push(bPoints, chart.point.from_index(int(xEnd), bktLo))
+                        array.push(bPoints, chart.point.from_index(int(xEnd), bktUp))
+                        array.push(sPoints, chart.point.from_index(xBase, bktLo))
+                        array.push(sPoints, chart.point.from_index(xBase, bktUp))
+                    else
+                        series float xEnd = xBase - direction * deltaWidth
+                        array.push(sPoints, chart.point.from_index(int(xEnd), bktLo))
+                        array.push(sPoints, chart.point.from_index(int(xEnd), bktUp))
+                        array.push(bPoints, chart.point.from_index(xBase, bktLo))
+                        array.push(bPoints, chart.point.from_index(xBase, bktUp))
+                array.push(bPoints, chart.point.from_index(xBase, yLast))
+                array.push(sPoints, chart.point.from_index(xBase, yLast))
+        
+        if math.max(array.size(bPoints), array.size(sPoints)) > MAX_POINTS
+            runtime.error("Polyline exceeded MAX_POINTS (" + str.tostring(MAX_POINTS) + "). Try decreasing 'Row Number'")
+
+        if array.size(bPoints) > 2
+            array.push(allPolylines, polyline.new(
+              points     = bPoints,
+              closed     = true,
+              xloc       = xloc.bar_index,
+              line_color = LINE_CLR,
+              fill_color = buyClr,
+              line_style = line.style_solid,
+              line_width = 1))
+        
+        if array.size(sPoints) > 2
+            array.push(allPolylines, polyline.new(
+              points     = sPoints,
+              closed     = true,
+              xloc       = xloc.bar_index,
+              line_color = LINE_CLR,
+              fill_color = sellClr,
+              line_style = line.style_solid,
+              line_width = 1))
+
+vaUpPl = plot(
+  series    = vaUp[offset],
+  title     = "Developing VA Up",
+  color     = color.new(color = #86549b, transp = 50),
+  style     = plot.style_stepline,
+  linewidth = 1,
+  offset    = -pivRi)
+vaLoPl = plot(
+  series    = vaLo[offset],
+  title     = "Developing VA Low",
+  color     = color.new(color = #86549b, transp = 50),
+  style     = plot.style_stepline,
+  linewidth = 1,
+  offset    = -pivRi)
+fill(
+  plot1 = vaUpPl,
+  plot2 = vaLoPl,
+  title = "Value Area",
+  color = color.new(color = #86549b, transp = 75))
+plot(
+  series    = poc[offset],
+  title     = "Developing POC",
+  color     = color.new(color = #b8b8b8, transp = 50),
+  style     = plot.style_stepline,
+  linewidth = 1,
+  offset    = -pivRi)
+
+sgmUpPl = plot(
+  series    = vwap[offset] + stdDev[offset],
+  title     = "Developing +StdDev",
+  color     = color.new(color = #b6a72b, transp = 50),
+  style     = plot.style_line,
+  linewidth = 1,
+  offset    = -pivRi)
+sgmLoPl = plot(
+  series    = vwap[offset] - stdDev[offset],
+  title     = "Developing -StdDev",
+  color     = color.new(color = #b6a72b, transp = 50),
+  style     = plot.style_line,
+  linewidth = 1,
+  offset    = -pivRi)
+fill(
+  plot1 = sgmLoPl,
+  plot2 = sgmUpPl,
+  title = "2 StdDev Area",
+  color = color.new(color = #b6a72b, transp = 75))
+plot(
+  series    = vwap[offset],
+  title     = "Developing VWAP",
+  color     = color.new(color = #c67600, transp = 50),
+  style     = plot.style_line,
+  linewidth = 1,
+  offset    = -pivRi)
+
+
+// ── ALERTS ───────────────────────────────────────────────────────────────────
+alertcondition(
+  condition = prfReset,
+  title     = "MSVP: Profile was resetted",
+  message   = "MSVP: Profile was resetted @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+
+alertcondition(
+  condition = ta.crossover(close[delay], vaUp),
+  title     = "MSVP: Price crosses above Upper Value Area Band",
+  message   = "MSVP: Price crosses above Upper Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossunder(close[delay], vaUp),
+  title     = "MSVP: Price crosses below Upper Value Area Band",
+  message   = "MSVP: Price crosses below Upper Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossover(close[delay], poc),
+  title     = "MSVP: Price crosses above Point of Control",
+  message   = "MSVP: Price crosses above Point of Control @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossunder(close[delay], poc),
+  title     = "MSVP: Price crosses below Point of Control",
+  message   = "MSVP: Price crosses below Point of Control @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossover(close[delay], vaLo),
+  title     = "MSVP: Price crosses above Lower Value Area Band",
+  message   = "MSVP: Price crosses above Lower Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossunder(close[delay], vaLo),
+  title     = "MSVP: Price crosses below Lower Value Area Band",
+  message   = "MSVP: Price crosses below Lower Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+
+alertcondition(
+  condition = ta.crossover(close[delay], vwap + stdDev),
+  title     = "MSVP: Price crosses above Upper StdDev Band",
+  message   = "MSVP: Price crosses above Upper StdDev Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossunder(close[delay], vwap + stdDev),
+  title     = "MSVP: Price crosses below Upper StdDev Band",
+  message   = "MSVP: Price crosses below Upper StdDevBand @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossover(close[delay], vwap),
+  title     = "MSVP: Price crosses above Volume Weighted Average Price",
+  message   = "MSVP: Price crosses above Volume Weighted Average Price @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossunder(close[delay], vwap),
+  title     = "MSVP: Price crosses below Volume Weighted Average Price",
+  message   = "MSVP: Price crosses below Volume Weighted Average Price @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossover(close[delay], vwap - stdDev),
+  title     = "MSVP: Price crosses above Lower StdDev Band",
+  message   = "MSVP: Price crosses above Lower StdDev Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = ta.crossunder(close[delay], vwap - stdDev),
+  title     = "MSVP: Price crosses below Lower StdDev Band",
+  message   = "MSVP: Price crosses below Lower StdDev Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
