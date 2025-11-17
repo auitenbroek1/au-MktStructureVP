@@ -5,6 +5,64 @@ All notable changes to the Market Structure Volume Profile (au-MSVP) indicator w
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2025-01-17
+
+### Added
+- **Peak Border Toggle**: New `Show Peak Border` setting for peak rectangle border visibility
+  - Allows showing peak rectangles with fill color only (no border)
+  - Default: disabled (border hidden)
+- **Enable Alerts Toggle**: New performance option to gate alert condition calculations
+  - Disabling alerts improves performance when not using alert features
+  - Default: disabled (alerts off)
+- **Conditional Calculation Optimization**: Smart performance system
+  - POC, VA, VWAP, and StdDev calculations only run when features are enabled
+  - Saves approximately 320 operations per bar when developing indicators are hidden
+  - Automatic dependency detection (e.g., VWAP needed for StdDev bands)
+
+### Changed
+- **Updated 14 Default Values** to optimized user preferences:
+  - Profile Anchor: `swing` → `structure`
+  - Row Number: `24` → `25`
+  - Volume Estimator: `dynamic` → `classic`
+  - Pivot Right Bars: `5` → `2`
+  - Pivot Price Tolerance: `0.05` → `0.02`
+  - Volume Display: `upDn` → `total`
+  - Show Developing Value Area: `true` → `false`
+  - Show Developing POC: `true` → `false`
+  - Show Developing StdDev Bands: `true` → `false`
+  - Show Developing VWAP: `true` → `false`
+  - Rectangle Border Width: `1` → `2`
+  - Show Peak Rectangles: `false` → `true`
+  - Show Peak Border: `true` → `false`
+  - Peak Extension Bars: `50` → `100`
+- **Restructured Rendering Order**: Investigation into z-order behavior
+  - Rectangle frame rendering moved before polyline rendering
+  - Peak rectangle rendering positioned between frames and polylines
+  - Note: Visual z-order unchanged due to Pine Script's type-based z-index hierarchy
+
+### Performance
+- **~320 operations per bar saved** when developing indicators disabled
+- **Alert calculations gated** behind Enable Alerts toggle
+- **Conditional library calls**: `getPoc()`, `getVA()`, `getVwap()`, `getStdDev()` only execute when needed
+
+### Technical Details
+- Lines 308-312: Enable Alerts toggle implementation
+- Lines 396-400: Show Peak Border toggle implementation
+- Lines 614-652: Conditional calculation logic with dependency tracking
+- Lines 1178-1231: Alert conditions gated with `enableAlerts` flag
+- Lines 778-1123: Z-order rendering restructure
+
+### Notes
+- Pine Script uses type-based z-index hierarchy (boxes always render above polylines)
+- Z-order cannot be controlled via creation order in Pine Script v6
+- Performance optimizations are backward-compatible with existing settings
+
+## [1.0.4] - 2025-01-11
+
+### Fixed
+- Two-phase capture architecture for peak rectangle timing
+- Resolved timing issues with historical peak rectangle rendering
+
 ## [1.0.3] - 2025-01-11
 
 ### Added
@@ -77,6 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version References
 
+- **[1.0.6]** - Performance optimizations and user preference defaults
+- **[1.0.4]** - Peak rectangle timing fixes
 - **[1.0.3]** - Rectangle backward-shift alignment improvement
 - **[1.0.2]** - Extended historical peak rectangles
 - **[1.0.1]** - Added peak rectangle highlighting

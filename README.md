@@ -1,6 +1,6 @@
 # Market Structure Volume Profile (au-MSVP)
 
-![Version](https://img.shields.io/badge/version-1.0.3-blue)
+![Version](https://img.shields.io/badge/version-1.0.6-blue)
 ![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-brightgreen)
 ![License](https://img.shields.io/badge/license-MPL--2.0-orange)
 
@@ -17,8 +17,9 @@ The Market Structure Volume Profile (MSVP) indicator revolutionizes traditional 
 - **Advanced Buy/Sell Analysis** - Dynamic volume estimator analyzes wicks and trends
 - **Flexible Display Modes** - View as Up/Down, Total Volume, or Delta
 - **Peak Rectangle Highlighting** - Automatically draws rectangles around high-volume peaks
+- **Performance Optimizations** - Conditional calculations save ~320 ops/bar when features disabled
 - **Dynamic Row Sizing** - Automatically adjusts profile resolution based on price range
-- **13 Built-in Alerts** - Real-time notifications for key level crosses
+- **13 Built-in Alerts** - Real-time notifications for key level crosses (optional)
 - **Non-Repainting** - Structure/Delta modes plot with confirmed data
 
 ## 🎯 Profile Anchoring Methods
@@ -71,9 +72,16 @@ Profiles reset when cumulative delta's market structure breaks (new HH or LL in 
 - **Side**: Display on left or right
 - **Colors**: Customize buy/sell volume colors
 - **Peak Rectangles**: Enable/disable highlighting of high-volume peaks
+  - Toggle border visibility with Show Peak Border
   - Customizable border color and fill transparency
   - Adjustable border width (1-4 pixels)
   - Configurable extension bars (10-200 bars forward)
+
+### Performance Options
+- **Enable Alert Conditions**: Toggle alert calculations on/off (default: off)
+- **Developing Indicators**: Show/hide POC, VA, VWAP, StdDev (default: hidden)
+  - Disabling saves ~320 operations per bar
+  - Conditional calculations only run when features are enabled
 
 ## 📊 Indicator Components
 
@@ -127,37 +135,40 @@ This indicator uses the following Pine Script libraries:
 - Higher row counts increase precision but impact performance
 - Lower intra-bar timeframes provide more accuracy
 - Max 100 profiles displayed to optimize rendering
+- Disable developing indicators when not needed (~320 ops/bar savings)
+- Disable alerts if you don't use them for better performance
 - Adjust settings based on available data resolution
 
 ## 📖 Version History
 
 See [CHANGELOG.md](changelog/CHANGELOG.md) for detailed version history.
 
-**Current Version: 1.0.3** (2025-01-11)
+**Current Version: 1.0.6** (2025-01-17)
+- Performance optimizations: ~320 ops/bar saved with conditional calculations
+- Added Peak Border toggle for peak rectangle border visibility
+- Added Enable Alerts toggle to gate alert condition calculations
+- Updated 14 default values to optimized user preferences
+- Restructured rendering order for z-order investigation
+- Profile Anchor default changed to Structure mode
+- Developing indicators (POC, VA, VWAP, StdDev) now disabled by default
+
+**Version 1.0.4** (2025-01-11)
+- Two-phase capture architecture for peak rectangle timing fixes
+
+**Version 1.0.3** (2025-01-11)
 - Rectangle backward-shift feature for improved visual alignment
 - Rectangles now start at previous profile's start position
-- Edge case handling for first profile and empty history
-- Further refinement planned based on user testing
 
 **Version 1.0.2** (2025-01-11)
 - Extended peak rectangles to historical volume profiles
 - Peak rectangles now render across all past profiles (up to 50)
-- Automatic capture of peak data on anchor changes
-- FIFO memory management for efficient historical tracking
 
 **Version 1.0.1** (2025-01-11)
 - Added peak rectangle highlighting feature
 - Rectangles automatically identify high-volume zones (≥50% of max volume)
-- Fully customizable colors, border width, and extension distance
-- Optimized threshold calculation for improved performance
 
 **Version 1.0.0** (2025-01-10)
-- Initial release
-- Event-based profile anchoring (Swing/Structure/Delta)
-- Statistical volume distribution engine
-- Dynamic buy/sell volume estimation
-- Flexible display modes
-- 13 integrated alerts
+- Initial release with event-based profile anchoring
 
 ## 🤝 Contributing
 
@@ -176,6 +187,7 @@ This indicator is provided for informational and educational purposes only. It d
 
 ---
 
-**Author**: © AustrianTradingMachine
+**Author**: Aaron Uitenbroek
+**Original Concept**: Based on Austrian Trading Machine libraries
 **Repository**: https://github.com/auitenbroek1/au-MktStructureVP
 **TradingView**: Market Structure Volume Profile (au-MSVP)
