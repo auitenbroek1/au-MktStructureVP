@@ -1,6 +1,6 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © AustrianTradingMachine
-// Version: 1.0.3
+// Version: 1.0.4
 
 // ── HEADER ───────────────────────────────────────────────────────────────────
 // @version=6
@@ -536,34 +536,28 @@ if prfReset
 
         // ══════════════════════════════════════════════════════════════════
         // HISTORICAL PROFILE CAPTURE (Flattened Array Architecture)
+        // Two-Phase Capture: Store boundaries NOW, attach peaks in barstate.islast
         // ══════════════════════════════════════════════════════════════════
 
-        if array.size(currentPeakStarts) > 0
-            // Store profile boundaries
-            array.push(profileStartBars, startBar)
-            array.push(profileEndBars, endBar)
+        // PHASE 1: Store profile boundaries UNCONDITIONALLY
+        // Peaks will be assigned in barstate.islast when peak detection runs
+        array.push(profileStartBars, startBar)
+        array.push(profileEndBars, endBar)
+        array.push(profilePeakCounts, 0)  // PLACEHOLDER - peaks assigned later
+        array.push(profilePeakStartIdx, array.size(allPeakStartPrices))
 
-            // Store peak count and starting index for this profile
-            int peakCount = array.size(currentPeakStarts)
-            array.push(profilePeakCounts, peakCount)
-            array.push(profilePeakStartIdx, array.size(allPeakStartPrices))
+        // FIFO cleanup if exceeding limit
+        if array.size(profileStartBars) > MAX_HISTORICAL_PROFILES
+            // Get oldest profile's peak count
+            int oldestPeakCount = array.shift(profilePeakCounts)
 
-            // Append peaks to flattened arrays (STORE PRICES NOT ROWS)
-            for i = 0 to peakCount - 1
-                array.push(allPeakStartPrices, array.get(currentPeakStartPrices, i))
-                array.push(allPeakEndPrices, array.get(currentPeakEndPrices, i))
+            // Remove oldest profile data
+            array.shift(profileStartBars)
+            array.shift(profileEndBars)
+            array.shift(profilePeakStartIdx)
 
-            // FIFO cleanup if exceeding limit
-            if array.size(profileStartBars) > MAX_HISTORICAL_PROFILES
-                // Get oldest profile's peak count
-                int oldestPeakCount = array.shift(profilePeakCounts)
-
-                // Remove oldest profile data
-                array.shift(profileStartBars)
-                array.shift(profileEndBars)
-                array.shift(profilePeakStartIdx)
-
-                // Remove oldest peaks from flattened arrays
+            // Remove oldest peaks from flattened arrays (only if profile had peaks)
+            if oldestPeakCount > 0
                 for i = 0 to oldestPeakCount - 1
                     if array.size(allPeakStartPrices) > 0
                         array.shift(allPeakStartPrices)
@@ -577,10 +571,10 @@ if prfReset
                     int currentIdx = array.get(profilePeakStartIdx, i)
                     array.set(profilePeakStartIdx, i, currentIdx - oldestPeakCount)
 
-                // Delete associated boxes
-                for i = 0 to math.min(oldestPeakCount, array.size(allBoxes)) - 1
-                    if array.size(allBoxes) > 0
-                        box.delete(array.shift(allBoxes))
+            // Delete associated boxes
+            for i = 0 to math.min(math.max(oldestPeakCount, 1), array.size(allBoxes)) - 1
+                if array.size(allBoxes) > 0
+                    box.delete(array.shift(allBoxes))
 
         // Clear working arrays for new profile
         array.clear(currentPeakStarts)
@@ -690,6 +684,8 @@ if endBar >= startBar
 
     array.clear(currentPeakStarts)
     array.clear(currentPeakEnds)
+    array.clear(currentPeakStartPrices)
+    array.clear(currentPeakEndPrices)
 
     bool inPeak = false
     int peakStart = 0
@@ -726,6 +722,27 @@ if endBar >= startBar
         [endPrice, _] = flashProf.getBktBnds(endRow)
         array.push(currentPeakStartPrices, startPrice)
         array.push(currentPeakEndPrices, endPrice)
+
+    // ══════════════════════════════════════════════════════════════════
+    // PHASE 2: ATTACH PEAKS TO MOST RECENT HISTORICAL PROFILE
+    // This completes the two-phase capture by assigning detected peaks
+    // to the profile that was just stored during prfReset
+    // ══════════════════════════════════════════════════════════════════
+    int numHistProfiles = array.size(profileStartBars)
+    if numHistProfiles > 0
+        // Check if most recent profile needs peaks assigned (placeholder count = 0)
+        int lastProfileIdx = numHistProfiles - 1
+        int lastPeakCount = array.get(profilePeakCounts, lastProfileIdx)
+
+        if lastPeakCount == 0
+            // Assign current detected peaks to this historical profile
+            int detectedPeakCount = array.size(currentPeakStarts)
+            array.set(profilePeakCounts, lastProfileIdx, detectedPeakCount)
+
+            // Copy peak prices to historical flattened storage
+            for i = 0 to detectedPeakCount - 1
+                array.push(allPeakStartPrices, array.get(currentPeakStartPrices, i))
+                array.push(allPeakEndPrices, array.get(currentPeakEndPrices, i))
 
     if maxVol > 0
         series float barWidth  = (endBar - startBar + 1) * profWidth / 100.0
@@ -948,6 +965,13 @@ if endBar >= startBar
             if profileBarCount < MIN_PROFILE_BARS
                 continue  // Skip this profile - insufficient data
 
+            // ──────────────────────────────────────────────────────────────
+            // SAFETY CHECK 3: Skip profiles with no peaks assigned
+            // ──────────────────────────────────────────────────────────────
+            // Profiles with peakCount=0 haven't had peaks assigned yet
+            if peakCount <= 0
+                continue  // Skip this profile - no peaks to render
+
             // Render each peak for this historical profile
             for peakIdx = 0 to peakCount - 1
                 // Check box limit before creating
@@ -958,8 +982,8 @@ if endBar >= startBar
                 float bottomPrice = array.get(allPeakStartPrices, peakStartIndex + peakIdx)
                 float topPrice = array.get(allPeakEndPrices, peakStartIndex + peakIdx)
 
-                // Historical peaks extend from PREVIOUS profile start to end + extension
-                int leftBar = profIdx > 0 ? array.get(profileStartBars, profIdx - 1) : histStartBar
+                // Historical peaks extend from profile's own start to end + extension
+                int leftBar = histStartBar  // Fixed: Use each profile's own start for consistency
                 int rightBar = histEndBar + peakExtensionBars
 
                 box peakBox = box.new(
@@ -1018,8 +1042,8 @@ if endBar >= startBar
                 [topPrice, _] = flashProf.getBktBnds(endRow)      // Top of peak
                 [_, bottomPrice] = flashProf.getBktBnds(startRow)  // Bottom of peak
 
-                // Time coordinates - shift to last historical profile start
-                int leftBar = array.size(profileStartBars) > 0 ? array.get(profileStartBars, array.size(profileStartBars) - 1) : startBar
+                // Time coordinates - use current profile's own start bar
+                int leftBar = startBar  // Fixed: Use current profile's start, not last historical
                 int rightBar = bar_index + peakExtensionBars
 
                 // ──────────────────────────────────────────────────────────
