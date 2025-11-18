@@ -5,6 +5,38 @@ All notable changes to the Market Structure Volume Profile (au-MSVP) indicator w
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2025-01-18
+
+### Added
+- **Peak Price Labels Feature**: Comprehensive labeling system for peak rectangles
+  - Display mode options: single range ("231.00 - 242.00") or dual labels (separate top/bottom)
+  - Font size configuration: adjustable from 6-20 (default: 15)
+  - Horizontal positioning: left, center, or right within rectangle (default: right)
+  - Customizable colors: text and background with transparency support
+  - Smart positioning with 15% inset to keep labels inside rectangles
+  - Default configuration: single range mode with black text on transparent background
+
+### Changed
+- **Label Positioning Algorithm**: Increased right position inset from 5% to 15%
+  - Previous behavior: Labels extended 1-2 digits past rectangle edge
+  - Updated behavior: All label digits contained within rectangle boundaries
+  - Uses consistent `label.style_label_center` for predictable, symmetric behavior
+  - Conservative enhancement approach prioritizing stability over complexity
+
+### Technical Details
+- Lines 421-460: Six new label input parameters (display mode, font size, position, colors)
+- Lines 462-492: Label positioning and sizing helper functions
+- Lines 597-605: Label storage arrays with 500-label FIFO management
+- Line 474: Right position inset calculation increased to 15%
+- Lines 1035-1095: Historical peak label rendering implementation (both display modes)
+- Lines 1197-1252: Current profile peak label rendering implementation (both display modes)
+
+### Notes
+- Label feature tested and confirmed working by user
+- Smart inset calculation provides 10% additional buffer over previous 5%
+- Mathematical justification: Each digit ≈ 2-3% of box width, requiring 7-10% additional buffer
+- Implementation prioritizes proven center-style approach over complex conditional styling
+
 ## [1.0.7] - 2025-01-18
 
 ### Added
@@ -173,6 +205,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version References
 
+- **[1.0.8]** - Peak price labels with customizable display modes and smart positioning
 - **[1.0.7]** - Configurable peak volume threshold (10-90%)
 - **[1.0.6]** - Performance optimizations and user preference defaults
 - **[1.0.4]** - Peak rectangle timing fixes

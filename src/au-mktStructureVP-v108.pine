@@ -1,0 +1,1480 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © AustrianTradingMachine
+// Version: 1.0.8
+
+// ── HEADER ───────────────────────────────────────────────────────────────────
+// @version=6
+//
+// @description   This indicator visualizes volume profiles that are dynamically
+//                anchored to market structure events, rather than fixed time
+//                intervals. It builds these profiles using high-resolution
+//                intra-bar data to provide a precise view of where value is
+//                established during critical market phases.
+//
+//                Key Features:
+//
+//                1.  **Event-Based Profile Anchoring:** The indicator starts a new
+//                    profile based on one of three user-selected events
+//                    ('Profile Anchor'):
+//                    - **Swing:** A new profile begins when the 'impulse baseline'
+//                      (derived from intra-bar delta) changes. This baseline
+//                      adjusts when a new **price pivot** is confirmed: When a
+//                      price **high** forms, the baseline moves to the **lower**
+//                      of its previous level or the peak delta (max of
+//                      delta O/C) at the pivot. When a price **low** forms, it
+//                      moves to the **higher** of its previous level or the
+//                      trough delta (min of delta O/C) at the pivot.
+//                    - **Structure:** A new profile begins immediately on the bar
+//                      that *confirms* a market structure break (e.g., a new HH
+//                      or LL, based on a sequence of price pivots).
+//                    - **Delta:** A new profile begins immediately on the bar
+//                      that *confirms* a break in the *cumulative delta's*
+//                      market structure (e.g., a new HH or LL in the delta).
+//                    Both 'Swing' and 'Delta' anchors are derived from the same
+//                    **continuous (non-resetting) Cumulative Volume Profile Delta (CVPD)**,
+//                    which is built from the intra-bar statistical analysis.
+//
+//                2.  **Statistical Profile Engine:** For each bar in the anchored
+//                    period, the indicator builds a volume profile on a lower
+//                    'Intra-Bar Timeframe'. Instead of simple tick counting, it
+//                    uses advanced statistical models:
+//                    - **Allocation ('Allot model'):** 'PDF' (Probability Density
+//                      Function) distributes volume proportionally across the
+//                      bar's range based on an assumed statistical model
+//                      (e.g., T4-Skew). 'Classic' assigns all volume to
+//                      the close.
+//                    - **Buy/Sell Split ('Volume Estimator'):** 'Dynamic'
+//                      applies a model that analyzes candle wicks and
+//                      recent trend to estimate buy/sell pressure. 'Classic'
+//                      classifies all volume based on the candle color.
+//
+//                3.  **Visualization & Lag:** The indicator plots the final
+//                    profile (as a polygon) and the developing statistical
+//                    lines (POC, VA, VWAP, StdDev).
+//                    - **Note on Lag:** All anchor events require `Pivot Right Bars`
+//                      for confirmation.
+//                    - In 'Structure' and 'Delta' mode, the developing lines
+//                      (POC, VA, etc.) are plotted using a **non-repainting**
+//                      method (showing the value from `pivRi` bars ago).
+//                    - In 'Swing' mode, the profile is plotted **retroactively**,
+//                      starting *from the bar where the pivot occurred*. The
+//                      developing lines are also plotted with this full
+//                      `pivRi` lag to align with the past data.
+//
+//                4.  **Flexible Display Modes:** The finalized profile can be displayed
+//                    in three ways: 'Up/Down' (buy vs. sell), 'Total' (combined
+//                    volume), and 'Delta' (net difference).
+//
+//                5.  **Dynamic Row Sizing:** Includes an option ('Rows per Percent')
+//                    to automatically adjust the number of profile rows (buckets)
+//                    based on the profile's price range.
+//
+//                6.  **Integrated Alerts:** Includes 13 alerts that trigger for:
+//                    - A new profile reset ('Profile was resetted').
+//                    - Price crossing any of the 6 developing levels (POC,
+//                      VA High/Low, VWAP, StdDev High/Low).
+//                    - **Alert Lag Assumption:** In 'Swing' mode, alerts are
+//                      delayed to match the retroactively plotted lines.
+//                      In 'Structure' and 'Delta' modes, alerts fire in
+//                      **real-time** based on the *current price* crossing
+//                      the *current (repainting)* value of the metric, which
+//                      may **differ from the non-repainting plotted line.**
+//
+//                **Caution: Real-Time Data Behavior (Intra-Bar Repainting)**
+//                This indicator uses high-resolution intra-bar data. As a result, the
+//                values on the **current, unclosed bar** (the real-time bar) will
+//                update dynamically as new intra-bar data arrives. This includes
+//                the values used for real-time alerts in 'Structure' and
+//                'Delta' modes.
+//
+//                ---
+//
+//                **DISCLAIMER**
+//
+//                1.  **For Informational/Educational Use Only:** This indicator is
+//                    provided for informational and educational purposes only. It does
+//                    not constitute financial, investment, or trading advice, nor is
+//                    it a recommendation to buy or sell any asset.
+//
+//                2.  **Use at Your Own Risk:** All trading decisions you make based on
+//                    the information or signals generated by this indicator are made
+//                    solely at your own risk.
+//
+//                3.  **No Guarantee of Performance:** Past performance is not an
+//                    indicator of future results. The author makes no guarantee
+//                    regarding the accuracy of the signals or future profitability.
+//
+//                4.  **No Liability:** The author shall not be held liable for any
+//                    financial losses or damages incurred directly or indirectly from
+//                    the use of this indicator.
+//
+//                5.  **Signals Are Not Recommendations:** The alerts and visual signals
+//                    (e.g., crossovers) generated by this tool are not direct
+//                    recommendations to buy or sell. They are technical observations
+//                    for your own analysis and consideration.
+indicator(
+  title               = "Market Structure Volume Profile",
+  shorttitle          = "au-MSVP",
+  overlay             = true,
+  max_bars_back       = 5000,
+  max_polylines_count = 100)
+
+// ── LOG ──────────────────────────────────────────────────────────────────────
+// 2025-11-01 0.1.0
+// Initial release of indicator
+
+// ── CONTROL ──────────────────────────────────────────────────────────────────
+const string NAME    = "MSVP"
+const string VERSION = "0.1.0"
+const string STATUS  = "rel"        // "rel", "dev", "dep"
+
+if barstate.isfirst
+    switch STATUS
+        "rel" => log.info("Indicator '" + NAME + " " + VERSION + "' released")
+        "dev" => log.warning("Indicator '" + NAME + " " + VERSION + "' in development")
+        "dep" => log.error("Indicator '" + NAME + " " + VERSION + "' deprecated!")
+        => runtime.error("Undefined status of indicator " + NAME + " " + VERSION)
+
+// ── IMPORTS ──────────────────────────────────────────────────────────────────
+import AustrianTradingMachine/LibTmFr/1 as LibTmFr
+import AustrianTradingMachine/LibBrSt/1 as LibBrSt
+import AustrianTradingMachine/LibPvot/1 as LibPvot
+import AustrianTradingMachine/LibVPrf/1 as LibVPrf
+
+// ── CONSTANTS ────────────────────────────────────────────────────────────────
+const int MAX_POLYLINES = 100
+const int MAX_POINTS    = 10000
+const int MAX_BOXES     = 500
+const int MAX_HISTORICAL_PROFILES = 50
+const int MIN_PROFILE_BARS = 5  // Minimum bars required before rendering rectangles
+const int MAX_BARS_BACK_LIMIT = 5000  // Must match max_bars_back parameter
+const int SAFETY_MARGIN = 100  // Safety margin for buffer limit checks (Issue #2 fix)
+
+// ── USER INPUTS ──────────────────────────────────────────────────────────────
+const string gB = "basic"
+enum ProfAnchor
+    swing     = "Swing"
+    structure = "Structure"
+    delta     = "Delta"
+ProfAnchor profAnchor = input.enum(
+  title   = "Profile Anchor",
+  group   = gB,
+  defval  = ProfAnchor.structure,
+  tooltip = "Selects the method for starting a new volume profile:\n\n
+             Swing: A new profile begins *at the bar* of each confirmed price swing.
+             Since a swing is only confirmed 'Pivot Right Bars' later, the entire profile
+             calculation and its developing lines (POC, VA) are delayed to align with the swing's
+             origin bar.\n\n
+             Structure: A new profile begins *at the bar* where the market structure break is
+             confirmed. The break itself is confirmed 'Pivot Right Bars' after the event, but
+             the profile calculation starts immediately from that new confirmation bar and
+             develops in real-time.\n\n
+             Delta: A new profile begins *at the bar* where the cumulative delta trend break is
+             confirmed.  This also starts immediately from the confirmation bar and develops in real-time.")
+const string gL = "ltf"
+bool ctmLTF = input.bool(
+  title  = "Use custom timeframe",
+  group  = gL,
+  defval = false)
+string manLTF = input.timeframe(
+  title  = "Intra-Bar Timeframe",
+  group  = gL,
+  defval = "")
+
+const string gV = "volume profile"
+bool rowDyn = input.bool(
+  title   = "Rows per Percent",
+  group   = gV,
+  defval  = true,
+  tooltip = "If enabled, the 'Row Number' input defines the target number of rows per 1% of the profile's
+             price range. The total rows are dynamically adjusted based on the profile's height, keeping visual
+             density consistent. If disabled, 'Row Number' is the fixed total count.")
+int rowNum = input.int(
+  title   = "Row Number",
+  group   = gV,
+  defval  = 25, minval = 1, step = 1,
+  tooltip = "Number of price levels (buckets) for the volume profile. A higher value
+             means finer resolution but is limited by the symbol's minimum tick size.")
+int valArea = input.int(
+  title   = "Value Area",
+  group   = gV,
+  defval  = 70, minval = 0, step = 1, maxval = 100,
+  tooltip = "The percentage of the period's total volume used to calculate the Value Area (VA). The VA
+             highlights the price range where the majority of trading occurred, centered around the Point
+             of Control (POC).")
+LibVPrf.AllotMode alltMod = input.enum(
+  title   = "Allot model",
+  group   = gV,
+  defval  = LibVPrf.AllotMode.pdf,
+  tooltip = "Determines how a candle's volume is distributed across the price levels.\n
+             \nCLASSIC: Assigns the entire volume to the level containing the close price.\n
+             \nPDF: Distributes the volume proportionally to the assumed price distribution
+             (Probability Density Function) within the candle.")
+LibBrSt.PriceEst prcEst = input.enum(
+  title   = "Price Estimator",
+  group   = gV,
+  defval  = LibBrSt.PriceEst.t4Skew,
+  tooltip = "Selects the statistical model (Price Density Function) used to estimate the price
+             distribution within a candle. This is only relevant when 'Profile model' is set to 'PDF'.")
+int intStp = input.int(
+  title   = "PDF Integration Steps",
+  group   = gV,
+  defval  = 20, minval = 1, step = 1,
+  tooltip = "Number of (Simpson) integration steps for calculating the volume distribution in PDF mode.
+             Higher values lead to a more accurate calculation but may slightly affect the indicator's
+             performance.")
+LibVPrf.SplitMode volEst = input.enum(
+  title   = "Volume Estimator",
+  group   = gV,
+  defval  = LibVPrf.SplitMode.classic,
+  tooltip = "Determines how volume is split into Buy and Sell volume.\n\nCLASSIC: Classifies all volume
+             on a level as Buy volume if the candle is green (Close ≥ Open), otherwise as Sell volume.\n
+             \nDYNAMIC: Applies a more complex model that considers the trend and wicks of the candles to
+             dynamically split the buy/sell volume.")
+int trendLen = input.int(
+  title   = "Trend Length",
+  group   = gV,
+  defval  = 3, minval = 1, step = 1, maxval = 5,
+  tooltip = "Lookback period (in candles) for trend determination. This value is only used in the 'DYNAMIC'
+             'Volume Estimator' mode to influence the buy and sell volume split.")
+
+const string gP = "pivot"
+int pivLe = input.int(
+  title   = "Pivot Left Bars",
+  group   = gP,
+  defval  = 10, minval = 1, step = 1,
+  tooltip = "Defines the strength of a pivot. A pivot high must have no higher high for this
+             number of bars to its left (and vice-versa for lows). Higher values result in
+             fewer, but more significant pivot points.")
+int pivRi = input.int(
+  title   = "Pivot Right Bars",
+  group   = gP,
+  defval  = 2, minval = 1, step = 1,
+  tooltip = "Defines the number of confirmation bars. A pivot is only confirmed after this
+             number of bars to its right has closed without breaking the pivot level. Higher
+             values result in more strongly confirmed signals, but with greater lag.")
+float pivTol = input.float(
+  title   = "Pivot Price Tolerance (%)",
+  group   = gP,
+  defval  = 0.02, minval  = 0, step    = 0.01, maxval = 100,
+  tooltip = "Percentage tolerance for comparing pivot prices.\n\nPivots with a price difference WITHIN this
+             tolerance are considered 'equal'")
+
+const string gD = "Display"
+enum VolDisp
+    upDn  = "Up/Down"
+    total = "Total"
+    delta = "Delta"
+VolDisp volDisp = input.enum(
+  title   = "Volume",
+  group   = gD,
+  defval  = VolDisp.total)
+float profWidth = input.float(
+  title  = "Width (% of the box)",
+  group  = gD,
+  defval = 100, minval = 1, step = 1, maxval = 100)
+enum ProfSide
+    right = "Right"
+    left  = "Left"
+ProfSide profSide = input.enum(
+  title   = "Display",
+  group   = gD,
+  defval  = ProfSide.left)
+
+bool showDevVA = input.bool(
+  title   = "Show Developing Value Area",
+  group   = gD,
+  defval  = false,
+  tooltip = "Display developing Value Area High/Low bands and fill")
+
+bool showDevPOC = input.bool(
+  title   = "Show Developing POC",
+  group   = gD,
+  defval  = false,
+  tooltip = "Display developing Point of Control line")
+
+bool showDevStdDev = input.bool(
+  title   = "Show Developing StdDev Bands",
+  group   = gD,
+  defval  = false,
+  tooltip = "Display developing Standard Deviation bands and fill")
+
+bool showDevVWAP = input.bool(
+  title   = "Show Developing VWAP",
+  group   = gD,
+  defval  = false,
+  tooltip = "Display developing Volume Weighted Average Price line")
+
+bool enableAlerts = input.bool(
+  title   = "Enable Alert Conditions",
+  group   = gD,
+  defval  = false,
+  tooltip = "Enable alert condition calculations. Disable for better performance if you don't use alerts.")
+
+const string gC = "color"
+color buyClr = input.color(
+  title  = "Buy Volume",
+  defval = color.new(color = #00332a, transp = 0),
+  group  = gC)
+color sellClr = input.color(
+  title  = "Sell Volume",
+  defval = color.new(color = #801922, transp = 0),
+  group  = gC)
+
+const string gR = "rectangle frame"
+
+bool showRect = input.bool(
+  title   = "Show Rectangle Frame",
+  group   = gR,
+  defval  = true,
+  tooltip = "Display a rectangle border around each volume profile. The rectangle spans from the profile's start time to end time horizontally, and from the profile's lowest to highest price vertically.")
+
+color rectBorderClr = input.color(
+  title   = "Border Color",
+  group   = gR,
+  defval  = color.new(color = #4a4a4a, transp = 0),
+  tooltip = "Color of the rectangle border line.")
+
+int rectBorderWidth = input.int(
+  title   = "Border Width",
+  group   = gR,
+  defval  = 2,
+  minval  = 1,
+  maxval  = 4,
+  step    = 1,
+  tooltip = "Thickness of the rectangle border in pixels.")
+
+string rectBorderStyle = input.string(
+  title   = "Border Style",
+  group   = gR,
+  defval  = line.style_solid,
+  options = [line.style_solid, line.style_dashed, line.style_dotted],
+  tooltip = "Line style for the rectangle border.")
+
+color rectFillClr = input.color(
+  title   = "Fill Color",
+  group   = gR,
+  defval  = color.new(color = #1a1a1a, transp = 95),
+  tooltip = "Background fill color of the rectangle. Use high transparency (90-98%) to avoid obscuring price action.")
+
+int rectTransp = input.int(
+  title   = "Fill Transparency",
+  group   = gR,
+  defval  = 95,
+  minval  = 0,
+  maxval  = 100,
+  step    = 1,
+  tooltip = "Transparency level for rectangle fill. Higher values (95-98) provide subtle background shading without obscuring the chart.")
+
+bool showPeakRect = input.bool(
+  title   = "Show Peak Rectangles",
+  group   = gR,
+  defval  = true,
+  tooltip = "Display rectangles highlighting high-volume peak zones where volume exceeds 50% of maximum volume.")
+
+color peakRectColor = input.color(
+  title   = "Peak Border Color",
+  group   = gR,
+  defval  = color.new(color = #ff0000, transp = 0),
+  tooltip = "Border color for peak rectangles.")
+
+color peakRectFillColor = input.color(
+  title   = "Peak Fill Color",
+  group   = gR,
+  defval  = color.new(color = #ff0000, transp = 85),
+  tooltip = "Fill color for peak rectangles with transparency.")
+
+int peakRectBorderWidth = input.int(
+  title   = "Peak Border Width",
+  group   = gR,
+  defval  = 1,
+  minval  = 1,
+  maxval  = 4,
+  step    = 1,
+  tooltip = "Thickness of peak rectangle border in pixels.")
+
+bool showPeakBorder = input.bool(
+  title   = "Show Peak Border",
+  group   = gR,
+  defval  = false,
+  tooltip = "Toggle the border visibility on peak rectangles. When disabled, only the fill color is shown.")
+
+int peakExtensionBars = input.int(
+  title   = "Peak Extension Bars",
+  group   = gR,
+  defval  = 100,
+  minval  = 10,
+  maxval  = 200,
+  step    = 1,
+  tooltip = "Number of bars to extend peak rectangles forward from the profile end.")
+
+float peakVolumeThreshold = input.float(
+  title   = "Peak Volume Threshold (%)",
+  group   = gR,
+  defval  = 30.0,
+  minval  = 10.0,
+  maxval  = 90.0,
+  step    = 5.0,
+  tooltip = "Volume threshold for peak detection. Rows with volume >= this % of maximum volume are highlighted. Lower = more peaks, Higher = fewer peaks.")
+
+// ── PEAK RECTANGLE LABEL INPUTS ────────────────────────────────────────────
+bool showPeakLabels = input.bool(
+  title   = "Show Peak Labels",
+  group   = gR,
+  defval  = true,
+  tooltip = "Display price labels on peak rectangles showing the top and bottom prices of each peak zone.")
+
+int labelFontSize = input.int(
+  title   = "Label Font Size",
+  group   = gR,
+  defval  = 15,
+  minval  = 6,
+  maxval  = 20,
+  step    = 1,
+  tooltip = "Font size for peak price labels.")
+
+string labelHorzPos = input.string(
+  title   = "Label Horizontal Position",
+  group   = gR,
+  defval  = "right",
+  options = ["left", "center", "right"],
+  tooltip = "Horizontal positioning of labels along the rectangle width.")
+
+color labelTextColor = input.color(
+  title   = "Label Text Color",
+  group   = gR,
+  defval  = color.new(color = #000000, transp = 0),
+  tooltip = "Color of the label text.")
+
+color labelBgColor = input.color(
+  title   = "Label Background Color",
+  group   = gR,
+  defval  = color.new(color = #ffffff, transp = 100),
+  tooltip = "Background color of the label with transparency.")
+
+string labelDisplayMode = input.string(
+  title   = "Label Display Mode",
+  group   = gR,
+  defval  = "single_range",
+  options = ["dual", "single_range"],
+  tooltip = "dual: Separate top/bottom labels | single_range: Combined range label (e.g., '231.00 - 242.00') for cleaner display and 2x peak capacity")
+
+// ── LABEL POSITION CALCULATION FUNCTIONS ─────────────────────────────────────
+// @function Calculates the x-position (bar index) for a label based on horizontal position setting
+// @param leftBar The left bar index of the rectangle
+// @param rightBar The right bar index of the rectangle
+// @returns int The calculated x-position for the label
+getLabelXPos(int leftBar, int rightBar) =>
+    int xPos = na
+    if labelHorzPos == "left"
+        xPos := leftBar + int((rightBar - leftBar) * 0.05)
+    else if labelHorzPos == "center"
+        xPos := int((leftBar + rightBar) / 2)
+    else if labelHorzPos == "right"
+        xPos := rightBar - int((rightBar - leftBar) * 0.15)
+    xPos
+
+// @function Converts label size enum to Pine Script size constant
+// @returns string The size constant for label.new()
+getLabelSize() =>
+    string labelSize = na
+    if labelFontSize >= 6 and labelFontSize <= 8
+        labelSize := size.tiny
+    else if labelFontSize >= 9 and labelFontSize <= 11
+        labelSize := size.small
+    else if labelFontSize >= 12 and labelFontSize <= 14
+        labelSize := size.normal
+    else if labelFontSize >= 15 and labelFontSize <= 17
+        labelSize := size.large
+    else
+        labelSize := size.huge
+    labelSize
+
+// ── CALCULATION ──────────────────────────────────────────────────────────────
+varip series string chartTF  = timeframe.main_period
+varip series string ibTF     = ctmLTF ? manLTF : LibTmFr.autoLTF(chartTF)
+
+if timeframe.in_seconds(ibTF) >= timeframe.in_seconds(chartTF)
+    runtime.error("Intra-Bar timeframe must be smaller than selected timeframe")
+
+// @function Factory function to create a standardized volume profile object.
+//           Reduces code duplication.
+// @returns  LibVPrf.volProf A new volume profile object.
+createProfile() =>
+    LibVPrf.create(
+      buckets   = rowNum,
+      rangeUp   = 0,
+      rangeLo   = 0,
+      dynamic   = true,
+      valueArea = valArea,
+      allot     = alltMod,
+      estimator = prcEst,
+      cdfSteps  = intStp,
+      split     = volEst,
+      trendLen  = trendLen)
+
+// @function Calculates all necessary values for each intra bar
+// @returns          [arra<float>, arra<float>, series float, ...] A tuple of the result values
+intBarCalc() =>
+    var series bool vldPrd  = false
+    series bool reset       = LibTmFr.isNewPeriod(chartTF)
+    series bool multiple    = LibTmFr.isMultipleTF(chartTF)
+    vldPrd := not multiple ? false : reset ? true : vldPrd
+
+    var LibVPrf.VProf ibProf = createProfile()
+
+    if reset
+        ibProf.clear()
+        ibProf.setRanges(
+          rangeUp = math.max(high, open + (syminfo.mintick/2)),
+          rangeLo = math.min(low,  open - (syminfo.mintick/2)))
+
+    if vldPrd
+        ibProf.addBar()
+        [ibProf.aBuy, ibProf.aSell, ibProf.rangeUp, ibProf.rangeLo, ibProf.cvd, ibProf.cvdHi, ibProf.cvdLo]
+    else
+        [na, na, na, na, na, na, na]
+
+// @function Converts the calculated intra bar values in the selected timeframe
+// @returns  [arra<float>, arra<float>, series float, ...] A tuple of the result values
+ibTFCnvrt() =>
+    request.security(syminfo.tickerid, ibTF, intBarCalc(), barmerge.gaps_off, barmerge.lookahead_off)
+
+[aBuy, aSell, rangeUp, rangeLo, cvd, cvdHi, cvdLo] = ibTFCnvrt()
+
+var LibVPrf.VProf msProf = createProfile()
+LibVPrf.VProf flashProf  = msProf.clone()
+
+// Arrays for rendering and historical storage
+var array<polyline> allPolylines = array.new<polyline>()
+var array<box> allBoxes = array.new<box>()  // Historical profile boxes only
+var array<box> currentProfileBoxes = array.new<box>()  // Current profile boxes (cleaned up on each bar)
+var int lastCurrentProfileBar = na  // Track which bar was last rendered
+
+// Historical profile storage using flattened arrays
+var array<int> profileStartBars = array.new<int>()
+var array<int> profileEndBars = array.new<int>()
+var array<int> profilePeakCounts = array.new<int>()
+var array<int> profilePeakStartIdx = array.new<int>()
+
+// Flattened peak data (all peaks concatenated) - STORES PRICES NOT ROWS
+var array<float> allPeakStartPrices = array.new<float>()
+var array<float> allPeakEndPrices = array.new<float>()
+
+// ── LABEL STORAGE ARRAYS ──────────────────────────────────────────────────
+// Arrays to track labels for both historical and current peaks
+// Stores top and bottom price labels for each peak rectangle (dual mode)
+// or single range labels (single_range mode)
+const int MAX_LABELS = 500
+var array<label> allPeakTopLabels = array.new<label>()  // Used for dual mode OR single_range mode
+var array<label> allPeakBottomLabels = array.new<label>()
+var array<label> currentPeakTopLabels = array.new<label>()
+var array<label> currentPeakBottomLabels = array.new<label>()
+
+var series float CumC = 0
+series float CumO     = CumC
+series float CumH     = CumO + nz(cvdHi)
+series float CumL     = CumO + nz(cvdLo)
+CumC += nz(cvd)
+
+series bool prfReset = false
+series int  delay    = na
+if profAnchor == ProfAnchor.swing
+    delay := pivRi
+
+    series bool pivPrcHi = not na(ta.pivothigh(high, pivLe, pivRi))
+    series bool pivPrcLo = not na(ta.pivotlow (low,  pivLe, pivRi))
+    var series float impulseStart = na
+    if pivPrcHi or pivPrcLo
+        impulseStart := switch pivPrcHi
+            true  => math.min(nz(impulseStart), math.max(CumO[pivRi], CumC[pivRi]))
+            false => math.max(nz(impulseStart), math.min(CumO[pivRi], CumC[pivRi]))
+
+    if impulseStart != impulseStart[1]
+        prfReset := true
+else if profAnchor == ProfAnchor.structure
+    delay := 0
+
+    [_, _, _, _, _, _, prcTrendState] = LibPvot.marketStructure(
+      highSrc  = high,
+      lowSrc   = low,
+      leftLen  = pivLe,
+      rightLen = pivRi,
+      srcTol   = pivTol)
+
+    if prcTrendState != prcTrendState[1]
+        prfReset := true
+else if profAnchor == ProfAnchor.delta
+    delay := 0
+
+    [_, _, _, _, _, _, cvdTrendState] = LibPvot.marketStructure(
+      highSrc  = CumH,
+      lowSrc   = CumL,
+      leftLen  = pivLe,
+      rightLen = pivRi,
+      srcTol   = pivTol)
+
+    if cvdTrendState != cvdTrendState[1]
+        prfReset := true
+
+var series int resetBar = na
+var series int prevResetBar = 0  // Tracks previous profile start for capture
+var bool isFirstReset = true
+series int     startBar = na
+series int       endBar = na
+
+// Working arrays for peak detection (will be copied to historical on anchor change)
+var array<int> currentPeakStarts = array.new<int>()
+var array<int> currentPeakEnds = array.new<int>()
+var array<float> currentPeakStartPrices = array.new<float>()
+var array<float> currentPeakEndPrices = array.new<float>()
+
+if prfReset
+    if isFirstReset
+        // First profile reset - initialize prevResetBar for first profile
+        isFirstReset := false
+        prevResetBar := 0  // First profile starts at bar 0
+    else if not na(resetBar)
+        startBar := resetBar - delay  // Use CURRENT profile's start with delay offset
+        endBar   := bar_index - 1     // End at bar before current reset
+
+        // ══════════════════════════════════════════════════════════════════
+        // HISTORICAL PROFILE CAPTURE (Flattened Array Architecture)
+        // Two-Phase Capture: Store boundaries NOW, attach peaks in barstate.islast
+        // ══════════════════════════════════════════════════════════════════
+
+        // PHASE 1: Store profile boundaries UNCONDITIONALLY
+        // Peaks will be assigned in barstate.islast when peak detection runs
+        array.push(profileStartBars, startBar)
+        array.push(profileEndBars, endBar)
+        array.push(profilePeakCounts, 0)  // PLACEHOLDER - peaks assigned later
+        array.push(profilePeakStartIdx, array.size(allPeakStartPrices))
+
+        // FIFO cleanup if exceeding limit
+        if array.size(profileStartBars) > MAX_HISTORICAL_PROFILES
+            // Get oldest profile's peak count
+            int oldestPeakCount = array.shift(profilePeakCounts)
+
+            // Remove oldest profile data
+            array.shift(profileStartBars)
+            array.shift(profileEndBars)
+            array.shift(profilePeakStartIdx)
+
+            // Remove oldest peaks from flattened arrays (only if profile had peaks)
+            if oldestPeakCount > 0
+                for i = 0 to oldestPeakCount - 1
+                    if array.size(allPeakStartPrices) > 0
+                        array.shift(allPeakStartPrices)
+                        array.shift(allPeakEndPrices)
+
+                // *** CRITICAL FIX: Adjust all remaining indices ***
+                // After shifting out oldestPeakCount elements, all remaining
+                // indices must be decremented by oldestPeakCount
+                int remainingProfiles = array.size(profilePeakStartIdx)
+                for i = 0 to remainingProfiles - 1
+                    int currentIdx = array.get(profilePeakStartIdx, i)
+                    array.set(profilePeakStartIdx, i, currentIdx - oldestPeakCount)
+
+            // Delete associated boxes
+            for i = 0 to math.min(math.max(oldestPeakCount, 1), array.size(allBoxes)) - 1
+                if array.size(allBoxes) > 0
+                    box.delete(array.shift(allBoxes))
+
+        // Clear working arrays for new profile
+        array.clear(currentPeakStarts)
+        array.clear(currentPeakEnds)
+        array.clear(currentPeakStartPrices)
+        array.clear(currentPeakEndPrices)
+
+    // Update prevResetBar before updating resetBar
+    // This ensures next capture uses the correct profile start
+    if not na(resetBar)
+        prevResetBar := resetBar
+    resetBar := bar_index
+
+    msProf.clear()
+    msProf.setRanges(
+      rangeUp = nz(rangeUp[delay], math.max(high[delay], open[delay] + (syminfo.mintick[delay]/2))),
+      rangeLo = nz(rangeLo[delay], math.min(low[delay],  open[delay] - (syminfo.mintick[delay]/2))))
+
+series float poc    = na
+series float vaUp   = na
+series float vaLo   = na
+series float vwap   = na
+series float stdDev = na
+
+// Pre-compute whether any developing indicator calculations are needed
+bool _needPOC = showDevPOC or enableAlerts
+bool _needVA = showDevVA or enableAlerts
+bool _needVWAP = showDevVWAP or showDevStdDev or enableAlerts
+bool _needStdDev = showDevStdDev or enableAlerts
+
+if not na(aBuy[delay]) and not na(resetBar)
+    msProf.merge(
+      srcABuy    = aBuy[delay],
+      srcASell   = aSell[delay],
+      srcRangeUp = rangeUp[delay],
+      srcRangeLo = rangeLo[delay],
+      srcCvd     = 0,
+      srcCvdHi   = 0,
+      srcCvdLo   = 0)
+
+    if rowDyn
+        msProf.setBuckets(int(rowNum * ((msProf.rangeUp - msProf.rangeLo)/msProf.rangeUp) * 100))
+
+    // ── CONDITIONAL DEVELOPING INDICATOR CALCULATIONS ─────────────────────────
+    // Optimization: Skip expensive calculations when features are disabled
+
+    if _needPOC
+        [_, _poc] = msProf.getPoc()
+        poc := _poc
+
+    if _needVA
+        [_, _vaUp, _, _vaLo] = msProf.getVA()
+        vaUp := _vaUp
+        vaLo := _vaLo
+
+    // VWAP required for both VWAP display and StdDev bands
+    if _needVWAP
+        [_, _vwap] = msProf.getVwap()
+        vwap := _vwap
+
+        // StdDev depends on VWAP being calculated
+        if _needStdDev
+            stdDev := msProf.getStdDev()
+
+if barstate.islast
+    if resetBar == bar_index
+        flashProf := msProf
+    else
+        for i = (delay - 1) to 0
+            if i >= 0
+                flashProf.merge(
+                  srcABuy    = aBuy[i],
+                  srcASell   = aSell[i],
+                  srcRangeUp = rangeUp[i],
+                  srcRangeLo = rangeLo[i],
+                  srcCvd     = 0,
+                  srcCvdHi   = 0,
+                  srcCvdLo   = 0)
+
+        if rowDyn
+            flashProf.setBuckets(int(rowNum * ((flashProf.rangeUp - flashProf.rangeLo)/flashProf.rangeUp) * 100))
+
+    endBar   := bar_index
+    startBar := resetBar - delay
+
+series int offset = profAnchor == ProfAnchor.swing ? 0 : pivRi
+
+// ── PLOTTING ─────────────────────────────────────────────────────────────────
+const color LINE_CLR = color.new(color = #000000, transp = 100)
+
+if endBar >= startBar
+    series float maxVol = 0.0
+    for i = 0 to flashProf.buckets - 1
+        series float bVol = flashProf.getBktBuyVol(i)
+        series float sVol = flashProf.getBktSellVol(i)
+
+        series float currentVol = switch volDisp
+            VolDisp.upDn  => bVol + sVol
+            VolDisp.total => bVol + sVol
+            VolDisp.delta => math.abs(bVol - sVol)
+
+        maxVol := math.max(maxVol, currentVol)
+
+    // ══════════════════════════════════════════════════════════════════
+    // PEAK DETECTION THRESHOLD CALCULATION
+    // ══════════════════════════════════════════════════════════════════
+    // Calculate volume threshold for peak detection using user-configurable percentage.
+    // Converts percentage (0-100) to decimal multiplier (0.0-1.0).
+    // Lower threshold = more peaks detected, Higher threshold = fewer but stronger peaks.
+
+    float volumeThreshold = maxVol * (peakVolumeThreshold / 100.0)
+
+    var array<float> volumeArray = array.new<float>()
+    array.clear(volumeArray)
+
+    for i = 0 to flashProf.buckets - 1
+        float bVol = flashProf.getBktBuyVol(i)
+        float sVol = flashProf.getBktSellVol(i)
+        float totalVol = bVol + sVol
+        array.push(volumeArray, totalVol)
+
+    // ══════════════════════════════════════════════════════════════════
+    // PEAK DETECTION (CONTINUOUS HIGH-VOLUME ZONES)
+    // ══════════════════════════════════════════════════════════════════
+    // Detect peaks: continuous regions where volume >= threshold
+    // Store in working arrays (currentPeakStarts/currentPeakEnds)
+
+    array.clear(currentPeakStarts)
+    array.clear(currentPeakEnds)
+    array.clear(currentPeakStartPrices)
+    array.clear(currentPeakEndPrices)
+
+    bool inPeak = false
+    int peakStart = 0
+
+    for i = 0 to flashProf.buckets - 1
+        float rowVol = array.get(volumeArray, i)
+        bool isHighVol = rowVol >= volumeThreshold
+
+        if isHighVol and not inPeak
+            // Peak starts
+            peakStart := i
+            inPeak := true
+        else if not isHighVol and inPeak
+            // Peak ends
+            int startRow = peakStart
+            int endRow = i - 1
+            array.push(currentPeakStarts, startRow)
+            array.push(currentPeakEnds, endRow)
+            // CHANGE 3: Capture prices when storing row indices
+            [startPrice, _] = flashProf.getBktBnds(startRow)
+            [endPrice, _] = flashProf.getBktBnds(endRow)
+            array.push(currentPeakStartPrices, startPrice)
+            array.push(currentPeakEndPrices, endPrice)
+            inPeak := false
+
+    // Handle peak extending to last row
+    if inPeak
+        int startRow = peakStart
+        int endRow = flashProf.buckets - 1
+        array.push(currentPeakStarts, startRow)
+        array.push(currentPeakEnds, endRow)
+        // CHANGE 3: Capture prices when storing row indices
+        [startPrice, _] = flashProf.getBktBnds(startRow)
+        [endPrice, _] = flashProf.getBktBnds(endRow)
+        array.push(currentPeakStartPrices, startPrice)
+        array.push(currentPeakEndPrices, endPrice)
+
+    // ══════════════════════════════════════════════════════════════════
+    // PHASE 2: ATTACH PEAKS TO MOST RECENT HISTORICAL PROFILE
+    // This completes the two-phase capture by assigning detected peaks
+    // to the profile that was just stored during prfReset
+    // ══════════════════════════════════════════════════════════════════
+    int numHistProfiles = array.size(profileStartBars)
+    if numHistProfiles > 0
+        // Check if most recent profile needs peaks assigned (placeholder count = 0)
+        int lastProfileIdx = numHistProfiles - 1
+        int lastPeakCount = array.get(profilePeakCounts, lastProfileIdx)
+
+        if lastPeakCount == 0
+            // Assign current detected peaks to this historical profile
+            int detectedPeakCount = array.size(currentPeakStarts)
+            array.set(profilePeakCounts, lastProfileIdx, detectedPeakCount)
+
+            // Copy peak prices to historical flattened storage
+            for i = 0 to detectedPeakCount - 1
+                array.push(allPeakStartPrices, array.get(currentPeakStartPrices, i))
+                array.push(allPeakEndPrices, array.get(currentPeakEndPrices, i))
+
+    // ══════════════════════════════════════════════════════════════════
+    // RECTANGLE FRAME RENDERING (Z-ORDER: Created FIRST = renders BEHIND polylines)
+    // ══════════════════════════════════════════════════════════════════
+    // This section draws a rectangular border around the completed volume
+    // profile. The rectangle spans from startBar to endBar (time axis) and
+    // from flashProf.rangeLo to flashProf.rangeUp (price axis).
+    //
+    // Box Management Strategy:
+    // - Pine Script limits: ~500 boxes per indicator instance
+    // - FIFO deletion: When approaching limit, oldest boxes are removed
+    // - Lifecycle: Boxes persist until manually deleted or limit exceeded
+    //
+    // Integration Points:
+    // - Coordinates: Uses startBar/endBar (lines 394-395, 448-449)
+    // - Price Range: Uses flashProf.rangeLo/rangeUp (available in flashProf)
+    // - Execution: Runs within same barstate.islast block as polylines
+    // ══════════════════════════════════════════════════════════════════
+
+    if showRect
+        // ──────────────────────────────────────────────────────────────
+        // STEP 1: Box Limit Management (FIFO Deletion)
+        // ──────────────────────────────────────────────────────────────
+        // Remove oldest box if array approaching limit (500 boxes).
+        // We maintain buffer of 1 box for the new rectangle.
+
+        if array.size(allBoxes) >= MAX_BOXES - 1
+            box.delete(array.shift(allBoxes))
+
+        // ──────────────────────────────────────────────────────────────
+        // STEP 2: Rectangle Creation
+        // ──────────────────────────────────────────────────────────────
+        // Create box with exact coordinates:
+        // - Time bounds: startBar (left) to endBar (right)
+        // - Price bounds: flashProf.rangeLo (bottom) to rangeUp (top)
+        //
+        // Note: flashProf contains the finalized profile with correct
+        // range values calculated during the profile merge operations.
+
+        box newBox = box.new(
+          left   = startBar,
+          top    = flashProf.rangeUp,
+          right  = endBar,
+          bottom = flashProf.rangeLo,
+
+          // Visual styling
+          border_color = rectBorderClr,
+          border_width = rectBorderWidth,
+          border_style = rectBorderStyle,
+
+          bgcolor      = color.new(rectFillClr, rectTransp),
+
+          // Configuration
+          xloc         = xloc.bar_index,
+          extend       = extend.none,
+          text         = na,
+          text_halign  = text.align_center,
+          text_valign  = text.align_center,
+          text_color   = na,
+          text_size    = size.auto)
+
+        // ──────────────────────────────────────────────────────────────
+        // STEP 3: Array Registration
+        // ──────────────────────────────────────────────────────────────
+        // Store box reference for lifecycle management.
+
+        array.push(allBoxes, newBox)
+
+    // ══════════════════════════════════════════════════════════════════
+    // PEAK RECTANGLE RENDERING (TWO-PHASE)
+    // ══════════════════════════════════════════════════════════════════
+    // This section renders peak rectangles in two phases:
+    // Phase 1: Historical profiles (completed profiles from past anchor changes)
+    // Phase 2: Current profile (developing profile)
+    //
+    // Peak Detection Logic:
+    // - Peaks are continuous zones where row volume >= threshold
+    // - Multiple peaks can exist in a single profile
+    // - Historical peaks extend to profileEnd + peakExtensionBars
+    // - Current peaks extend to bar_index + peakExtensionBars
+    //
+    // Integration Points:
+    // - Uses existing allBoxes array for FIFO management
+    // - Historical data from historicalStartBars/EndBars/PeakStarts/PeakEnds
+    // - Current data from currentPeakStarts/currentPeakEnds
+    // ══════════════════════════════════════════════════════════════════
+
+    if showPeakRect and barstate.islast
+        // ══════════════════════════════════════════════════════════════════
+        // PHASE 1: RENDER HISTORICAL PROFILE PEAKS
+        // ══════════════════════════════════════════════════════════════════
+        int numHistoricalProfiles = array.size(profileStartBars)
+
+        for profIdx = 0 to numHistoricalProfiles - 1
+            int histStartBar = array.get(profileStartBars, profIdx)
+            int histEndBar = array.get(profileEndBars, profIdx)
+            int peakCount = array.get(profilePeakCounts, profIdx)
+            int peakStartIndex = array.get(profilePeakStartIdx, profIdx)
+
+            // Calculate profile bar count
+            int profileBarCount = histEndBar - histStartBar + 1
+
+            // ──────────────────────────────────────────────────────────────
+            // SAFETY CHECK 1: Historical Buffer Boundary (Issue #2)
+            // ──────────────────────────────────────────────────────────────
+            // Prevent "historical offset beyond buffer limit" errors
+            // Use max_bars_back limit (5000) minus safety margin
+            int maxSafeOffset = MAX_BARS_BACK_LIMIT - SAFETY_MARGIN
+            int barsBack = bar_index - histStartBar
+            if barsBack > maxSafeOffset
+                continue  // Skip this profile - too far in the past
+
+            // ──────────────────────────────────────────────────────────────
+            // SAFETY CHECK 2: 5-Bar Minimum Filter (Issue #6)
+            // ──────────────────────────────────────────────────────────────
+            // Only render rectangles for profiles with >= 5 bars of data
+            if profileBarCount < MIN_PROFILE_BARS
+                continue  // Skip this profile - insufficient data
+
+            // ──────────────────────────────────────────────────────────────
+            // SAFETY CHECK 3: Skip profiles with no peaks assigned
+            // ──────────────────────────────────────────────────────────────
+            // Profiles with peakCount=0 haven't had peaks assigned yet
+            if peakCount <= 0
+                continue  // Skip this profile - no peaks to render
+
+            // Render each peak for this historical profile
+            for peakIdx = 0 to peakCount - 1
+                // Check box limit before creating
+                if array.size(allBoxes) >= MAX_BOXES - 10
+                    box.delete(array.shift(allBoxes))
+
+                // CHANGE 5: Get PRICES directly from flattened arrays (not rows)
+                float bottomPrice = array.get(allPeakStartPrices, peakStartIndex + peakIdx)
+                float topPrice = array.get(allPeakEndPrices, peakStartIndex + peakIdx)
+
+                // Historical peaks extend from profile's own start to end + extension
+                int leftBar = histStartBar  // Fixed: Use each profile's own start for consistency
+                int rightBar = histEndBar + peakExtensionBars
+
+                box peakBox = box.new(
+                  left   = leftBar,
+                  top    = topPrice,
+                  right  = rightBar,
+                  bottom = bottomPrice,
+                  border_color = showPeakBorder ? peakRectColor : color.new(color.black, 100),
+                  border_width = showPeakBorder ? peakRectBorderWidth : 0,
+                  border_style = line.style_solid,
+                  bgcolor      = peakRectFillColor,
+                  xloc         = xloc.bar_index,
+                  extend       = extend.none)
+
+                array.push(allBoxes, peakBox)
+
+                // ──────────────────────────────────────────────────────────
+                // LABEL CREATION FOR HISTORICAL PEAKS
+                // ──────────────────────────────────────────────────────────
+                // Create top and bottom price labels for each historical peak
+                if showPeakLabels
+                    // Calculate common values
+                    int labelX = getLabelXPos(leftBar, rightBar)
+                    string labelSz = getLabelSize()
+                    string topText = str.tostring(topPrice, format.mintick)
+                    string bottomText = str.tostring(bottomPrice, format.mintick)
+
+                    if labelDisplayMode == "single_range"
+                        // ───────── SINGLE RANGE LABEL MODE ─────────
+                        // FIFO cleanup (maintain 500 label limit)
+                        if array.size(allPeakTopLabels) >= MAX_LABELS - 1
+                            label.delete(array.shift(allPeakTopLabels))
+
+                        // Calculate middle position
+                        float rangeYPos = (topPrice + bottomPrice) / 2
+
+                        // Create combined range text with dash separator
+                        string rangeText = bottomText + " - " + topText
+
+                        // Create single range label
+                        label rangeLabel = label.new(
+                          x         = labelX,
+                          y         = rangeYPos,
+                          text      = rangeText,
+                          xloc      = xloc.bar_index,
+                          yloc      = yloc.price,
+                          color     = labelBgColor,
+                          textcolor = labelTextColor,
+                          size      = labelSz,
+                          style     = label.style_label_center,
+                          tooltip   = "Peak Range: " + bottomText + " - " + topText)
+
+                        array.push(allPeakTopLabels, rangeLabel)
+                    else
+                        // ───────── DUAL LABEL MODE (DEFAULT) ─────────
+                        // FIFO cleanup for labels (maintain 500 label limit)
+                        if array.size(allPeakTopLabels) >= MAX_LABELS - 2
+                            label.delete(array.shift(allPeakTopLabels))
+                            label.delete(array.shift(allPeakBottomLabels))
+
+                        // Create top label (centered exactly at topPrice)
+                        label topLabel = label.new(
+                          x         = labelX,
+                          y         = topPrice,
+                          text      = topText,
+                          xloc      = xloc.bar_index,
+                          yloc      = yloc.price,
+                          color     = labelBgColor,
+                          textcolor = labelTextColor,
+                          size      = labelSz,
+                          style     = label.style_label_center,
+                          tooltip   = "Peak Top: " + topText)
+
+                        // Create bottom label (centered exactly at bottomPrice)
+                        label bottomLabel = label.new(
+                          x         = labelX,
+                          y         = bottomPrice,
+                          text      = bottomText,
+                          xloc      = xloc.bar_index,
+                          yloc      = yloc.price,
+                          color     = labelBgColor,
+                          textcolor = labelTextColor,
+                          size      = labelSz,
+                          style     = label.style_label_center,
+                          tooltip   = "Peak Bottom: " + bottomText)
+
+                        array.push(allPeakTopLabels, topLabel)
+                        array.push(allPeakBottomLabels, bottomLabel)
+
+        // ══════════════════════════════════════════════════════════════════
+        // PHASE 2: RENDER CURRENT PROFILE PEAKS
+        // ══════════════════════════════════════════════════════════════════
+        // Render peaks for the currently developing profile
+
+        int numCurrentPeaks = array.size(currentPeakStarts)
+
+        // ──────────────────────────────────────────────────────────────
+        // CLEANUP: Delete Previous Current Profile Boxes and Labels
+        // ──────────────────────────────────────────────────────────────
+        // On each new bar, delete all boxes and labels from the previous current profile
+        // to prevent stacking/overlapping rectangles and labels
+        bool isNewBar = bar_index != lastCurrentProfileBar
+        if isNewBar and array.size(currentProfileBoxes) > 0
+            // Delete all current profile boxes
+            for i = 0 to array.size(currentProfileBoxes) - 1
+                box.delete(array.get(currentProfileBoxes, i))
+            // Clear the array
+            array.clear(currentProfileBoxes)
+
+        // Delete all current profile labels on new bar
+        if isNewBar and showPeakLabels
+            // Delete top labels
+            for i = 0 to array.size(currentPeakTopLabels) - 1
+                label.delete(array.get(currentPeakTopLabels, i))
+            array.clear(currentPeakTopLabels)
+
+            // Delete bottom labels
+            for i = 0 to array.size(currentPeakBottomLabels) - 1
+                label.delete(array.get(currentPeakBottomLabels, i))
+            array.clear(currentPeakBottomLabels)
+
+        // ──────────────────────────────────────────────────────────────
+        // SAFETY CHECK: 5-Bar Minimum Filter for Current Profile (Issue #6)
+        // ──────────────────────────────────────────────────────────────
+        // Calculate current profile bar count
+        int currentProfileBarCount = not na(resetBar) ? bar_index - resetBar + 1 : bar_index + 1
+
+        // Only render if current profile has at least 5 bars
+        if currentProfileBarCount >= MIN_PROFILE_BARS
+            for peakIdx = 0 to numCurrentPeaks - 1
+                // Check box limit before creating
+                if array.size(allBoxes) >= MAX_BOXES - 10
+                    box.delete(array.shift(allBoxes))
+
+                // Get peak boundaries (row indices)
+                int startRow = array.get(currentPeakStarts, peakIdx)
+                int endRow = array.get(currentPeakEnds, peakIdx)
+
+                // Get price boundaries for this peak
+                // Note: Row 0 is at the bottom, higher row numbers are at the top
+                [topPrice, _] = flashProf.getBktBnds(endRow)      // Top of peak
+                [_, bottomPrice] = flashProf.getBktBnds(startRow)  // Bottom of peak
+
+                // Time coordinates - use current profile's own start bar
+                int leftBar = startBar  // Fixed: Use current profile's start, not last historical
+                int rightBar = bar_index + peakExtensionBars
+
+                // ──────────────────────────────────────────────────────────
+                // STEP 1: Box Limit Management (FIFO Deletion)
+                // ──────────────────────────────────────────────────────────
+                // Maintain buffer of 10 boxes for peaks
+
+                if array.size(allBoxes) >= MAX_BOXES - 10
+                    box.delete(array.shift(allBoxes))
+
+                // ──────────────────────────────────────────────────────────
+                // STEP 2: Create Peak Rectangle
+                // ──────────────────────────────────────────────────────────
+
+                box peakBox = box.new(
+                  left   = leftBar,
+                  top    = topPrice,
+                  right  = rightBar,
+                  bottom = bottomPrice,
+
+                  // Visual styling - conditionally show/hide border
+                  border_color = showPeakBorder ? peakRectColor : color.new(color.black, 100),
+                  border_width = showPeakBorder ? peakRectBorderWidth : 0,
+                  border_style = line.style_solid,
+
+                  bgcolor      = peakRectFillColor,
+
+                  // Configuration
+                  xloc         = xloc.bar_index,
+                  extend       = extend.none)
+
+                // ──────────────────────────────────────────────────────────
+                // STEP 3: Array Registration
+                // ──────────────────────────────────────────────────────────
+
+                array.push(currentProfileBoxes, peakBox)  // Current profile boxes (cleaned up on each new bar)
+
+                // ──────────────────────────────────────────────────────────
+                // LABEL CREATION FOR CURRENT PROFILE PEAKS
+                // ──────────────────────────────────────────────────────────
+                // Create top and bottom price labels for each current peak
+                if showPeakLabels
+                    // Calculate common values
+                    int labelX = getLabelXPos(leftBar, rightBar)
+                    string labelSz = getLabelSize()
+                    string topText = str.tostring(topPrice, format.mintick)
+                    string bottomText = str.tostring(bottomPrice, format.mintick)
+
+                    if labelDisplayMode == "single_range"
+                        // ───────── SINGLE RANGE LABEL MODE ─────────
+                        // Calculate middle position
+                        float rangeYPos = (topPrice + bottomPrice) / 2
+
+                        // Create combined range text with dash separator
+                        string rangeText = bottomText + " - " + topText
+
+                        // Create single range label
+                        label rangeLabel = label.new(
+                          x         = labelX,
+                          y         = rangeYPos,
+                          text      = rangeText,
+                          xloc      = xloc.bar_index,
+                          yloc      = yloc.price,
+                          color     = labelBgColor,
+                          textcolor = labelTextColor,
+                          size      = labelSz,
+                          style     = label.style_label_center,
+                          tooltip   = "Peak Range: " + bottomText + " - " + topText)
+
+                        array.push(currentPeakTopLabels, rangeLabel)
+                    else
+                        // ───────── DUAL LABEL MODE (DEFAULT) ─────────
+                        // Create top label (centered exactly at topPrice)
+                        label topLabel = label.new(
+                          x         = labelX,
+                          y         = topPrice,
+                          text      = topText,
+                          xloc      = xloc.bar_index,
+                          yloc      = yloc.price,
+                          color     = labelBgColor,
+                          textcolor = labelTextColor,
+                          size      = labelSz,
+                          style     = label.style_label_center,
+                          tooltip   = "Peak Top: " + topText)
+
+                        // Create bottom label (centered exactly at bottomPrice)
+                        label bottomLabel = label.new(
+                          x         = labelX,
+                          y         = bottomPrice,
+                          text      = bottomText,
+                          xloc      = xloc.bar_index,
+                          yloc      = yloc.price,
+                          color     = labelBgColor,
+                          textcolor = labelTextColor,
+                          size      = labelSz,
+                          style     = label.style_label_center,
+                          tooltip   = "Peak Bottom: " + bottomText)
+
+                        array.push(currentPeakTopLabels, topLabel)
+                        array.push(currentPeakBottomLabels, bottomLabel)
+
+        // Track that we've rendered this bar
+        lastCurrentProfileBar := bar_index
+
+    // ══════════════════════════════════════════════════════════════════
+    // POLYLINE RENDERING (Z-ORDER: Created LAST = renders ON TOP of rectangles)
+    // ══════════════════════════════════════════════════════════════════
+    // Volume profile polylines are created after all rectangles to ensure
+    // they render on top (foreground layer) for proper visual hierarchy.
+    // ══════════════════════════════════════════════════════════════════
+
+    if maxVol > 0
+        series float barWidth  = (endBar - startBar + 1) * profWidth / 100.0
+        series int   xBase     = profSide == ProfSide.left ? startBar : endBar
+        series int   direction = profSide == ProfSide.left ? 1 : -1
+
+        series int reqPolyLn = volDisp == VolDisp.total ? 1 : 2
+        while array.size(allPolylines) > MAX_POLYLINES - reqPolyLn
+            polyline.delete(array.shift(allPolylines))
+
+        array<chart.point> bPoints = array.new<chart.point>()
+        array<chart.point> sPoints = array.new<chart.point>()
+
+        [firstBktUp, firstBktLo] = flashProf.getBktBnds(0)
+        series float yFirst = firstBktLo + (firstBktUp - firstBktLo) * 0.025
+
+        [lastBktUp, lastBktLo] = flashProf.getBktBnds(flashProf.buckets - 1)
+        series float yLast = lastBktUp - (lastBktUp - lastBktLo) * 0.025
+
+        switch volDisp
+            VolDisp.upDn =>
+                array.push(bPoints, chart.point.from_index(xBase, yFirst))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol   = flashProf.getBktBuyVol(i)
+                    series float buyWidth = barWidth * (buyVol / maxVol)
+                    series float xEnd     = xBase + direction * buyWidth
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktLo))
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktUp))
+                array.push(bPoints, chart.point.from_index(xBase, yLast))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol     = flashProf.getBktBuyVol(i)
+                    series float sellVol    = flashProf.getBktSellVol(i)
+                    series float buyWidth   = barWidth * (buyVol / maxVol)
+                    series float sellWidth  = barWidth * (sellVol / maxVol)
+                    series float sellXStart = xBase + direction * buyWidth
+                    series float sellXEnd   = sellXStart + direction * sellWidth
+                    array.push(sPoints, chart.point.from_index(int(sellXEnd), bktLo))
+                    array.push(sPoints, chart.point.from_index(int(sellXEnd), bktUp))
+                for i = flashProf.buckets - 1 to 0
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol     = flashProf.getBktBuyVol(i)
+                    series float buyWidth   = barWidth * (buyVol / maxVol)
+                    series float sellXStart = xBase + direction * buyWidth
+                    array.push(sPoints, chart.point.from_index(int(sellXStart), bktUp))
+                    array.push(sPoints, chart.point.from_index(int(sellXStart), bktLo))
+            VolDisp.total =>
+                array.push(bPoints, chart.point.from_index(xBase, yFirst))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float totalVol   = flashProf.getBktBuyVol(i) + flashProf.getBktSellVol(i)
+                    series float totalWidth = barWidth * (totalVol / maxVol)
+                    series float xEnd       = xBase + direction * totalWidth
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktLo))
+                    array.push(bPoints, chart.point.from_index(int(xEnd), bktUp))
+                array.push(bPoints, chart.point.from_index(xBase, yLast))
+            VolDisp.delta =>
+                array.push(bPoints, chart.point.from_index(xBase, yFirst))
+                array.push(sPoints, chart.point.from_index(xBase, yFirst))
+                for i = 0 to flashProf.buckets - 1
+                    [bktUp, bktLo] = flashProf.getBktBnds(i)
+                    series float buyVol     = flashProf.getBktBuyVol(i)
+                    series float sellVol    = flashProf.getBktSellVol(i)
+                    series float deltaVol   = buyVol - sellVol
+                    series float deltaWidth = barWidth * (math.abs(deltaVol) / maxVol)
+                    if deltaVol >= 0
+                        series float xEnd = xBase + direction * deltaWidth
+                        array.push(bPoints, chart.point.from_index(int(xEnd), bktLo))
+                        array.push(bPoints, chart.point.from_index(int(xEnd), bktUp))
+                        array.push(sPoints, chart.point.from_index(xBase, bktLo))
+                        array.push(sPoints, chart.point.from_index(xBase, bktUp))
+                    else
+                        series float xEnd = xBase - direction * deltaWidth
+                        array.push(sPoints, chart.point.from_index(int(xEnd), bktLo))
+                        array.push(sPoints, chart.point.from_index(int(xEnd), bktUp))
+                        array.push(bPoints, chart.point.from_index(xBase, bktLo))
+                        array.push(bPoints, chart.point.from_index(xBase, bktUp))
+                array.push(bPoints, chart.point.from_index(xBase, yLast))
+                array.push(sPoints, chart.point.from_index(xBase, yLast))
+
+        if math.max(array.size(bPoints), array.size(sPoints)) > MAX_POINTS
+            runtime.error("Polyline exceeded MAX_POINTS (" + str.tostring(MAX_POINTS) + "). Try decreasing 'Row Number'")
+
+        if array.size(bPoints) > 2
+            array.push(allPolylines, polyline.new(
+              points     = bPoints,
+              closed     = true,
+              xloc       = xloc.bar_index,
+              line_color = LINE_CLR,
+              fill_color = buyClr,
+              line_style = line.style_solid,
+              line_width = 1))
+
+        if array.size(sPoints) > 2
+            array.push(allPolylines, polyline.new(
+              points     = sPoints,
+              closed     = true,
+              xloc       = xloc.bar_index,
+              line_color = LINE_CLR,
+              fill_color = sellClr,
+              line_style = line.style_solid,
+              line_width = 1))
+
+vaUpPl = plot(
+  series    = showDevVA ? vaUp[offset] : na,
+  title     = "Developing VA Up",
+  color     = color.new(color = #86549b, transp = 50),
+  style     = plot.style_stepline,
+  linewidth = 1,
+  offset    = -pivRi)
+vaLoPl = plot(
+  series    = showDevVA ? vaLo[offset] : na,
+  title     = "Developing VA Low",
+  color     = color.new(color = #86549b, transp = 50),
+  style     = plot.style_stepline,
+  linewidth = 1,
+  offset    = -pivRi)
+fill(
+  plot1 = vaUpPl,
+  plot2 = vaLoPl,
+  title = "Value Area",
+  color = showDevVA ? color.new(color = #86549b, transp = 75) : na)
+plot(
+  series    = showDevPOC ? poc[offset] : na,
+  title     = "Developing POC",
+  color     = color.new(color = #b8b8b8, transp = 50),
+  style     = plot.style_stepline,
+  linewidth = 1,
+  offset    = -pivRi)
+
+sgmUpPl = plot(
+  series    = showDevStdDev ? vwap[offset] + stdDev[offset] : na,
+  title     = "Developing +StdDev",
+  color     = color.new(color = #b6a72b, transp = 50),
+  style     = plot.style_line,
+  linewidth = 1,
+  offset    = -pivRi)
+sgmLoPl = plot(
+  series    = showDevStdDev ? vwap[offset] - stdDev[offset] : na,
+  title     = "Developing -StdDev",
+  color     = color.new(color = #b6a72b, transp = 50),
+  style     = plot.style_line,
+  linewidth = 1,
+  offset    = -pivRi)
+fill(
+  plot1 = sgmLoPl,
+  plot2 = sgmUpPl,
+  title = "2 StdDev Area",
+  color = showDevStdDev ? color.new(color = #b6a72b, transp = 75) : na)
+plot(
+  series    = showDevVWAP ? vwap[offset] : na,
+  title     = "Developing VWAP",
+  color     = color.new(color = #c67600, transp = 50),
+  style     = plot.style_line,
+  linewidth = 1,
+  offset    = -pivRi)
+
+
+// ── ALERTS ───────────────────────────────────────────────────────────────────
+// Note: alertcondition() calls have minimal performance impact as they only
+// register conditions. The expensive part is the calculation of values used
+// in the conditions, which is now gated by enableAlerts toggle.
+
+alertcondition(
+  condition = enableAlerts and prfReset,
+  title     = "MSVP: Profile was resetted",
+  message   = "MSVP: Profile was resetted @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+
+alertcondition(
+  condition = enableAlerts and ta.crossover(close[delay], vaUp),
+  title     = "MSVP: Price crosses above Upper Value Area Band",
+  message   = "MSVP: Price crosses above Upper Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossunder(close[delay], vaUp),
+  title     = "MSVP: Price crosses below Upper Value Area Band",
+  message   = "MSVP: Price crosses below Upper Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossover(close[delay], poc),
+  title     = "MSVP: Price crosses above Point of Control",
+  message   = "MSVP: Price crosses above Point of Control @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossunder(close[delay], poc),
+  title     = "MSVP: Price crosses below Point of Control",
+  message   = "MSVP: Price crosses below Point of Control @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossover(close[delay], vaLo),
+  title     = "MSVP: Price crosses above Lower Value Area Band",
+  message   = "MSVP: Price crosses above Lower Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossunder(close[delay], vaLo),
+  title     = "MSVP: Price crosses below Lower Value Area Band",
+  message   = "MSVP: Price crosses below Lower Value Area Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+
+alertcondition(
+  condition = enableAlerts and ta.crossover(close[delay], vwap + stdDev),
+  title     = "MSVP: Price crosses above Upper StdDev Band",
+  message   = "MSVP: Price crosses above Upper StdDev Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossunder(close[delay], vwap + stdDev),
+  title     = "MSVP: Price crosses below Upper StdDev Band",
+  message   = "MSVP: Price crosses below Upper StdDevBand @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossover(close[delay], vwap),
+  title     = "MSVP: Price crosses above Volume Weighted Average Price",
+  message   = "MSVP: Price crosses above Volume Weighted Average Price @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossunder(close[delay], vwap),
+  title     = "MSVP: Price crosses below Volume Weighted Average Price",
+  message   = "MSVP: Price crosses below Volume Weighted Average Price @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossover(close[delay], vwap - stdDev),
+  title     = "MSVP: Price crosses above Lower StdDev Band",
+  message   = "MSVP: Price crosses above Lower StdDev Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")
+alertcondition(
+  condition = enableAlerts and ta.crossunder(close[delay], vwap - stdDev),
+  title     = "MSVP: Price crosses below Lower StdDev Band",
+  message   = "MSVP: Price crosses below Lower StdDev Band @ {{exchange}}:{{ticker}}, TF {{interval}}.")

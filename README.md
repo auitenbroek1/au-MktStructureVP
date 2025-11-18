@@ -1,6 +1,6 @@
 # Market Structure Volume Profile (au-MSVP)
 
-![Version](https://img.shields.io/badge/version-1.0.7-blue)
+![Version](https://img.shields.io/badge/version-1.0.8-blue)
 ![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-brightgreen)
 ![License](https://img.shields.io/badge/license-MPL--2.0-orange)
 
@@ -17,6 +17,7 @@ The Market Structure Volume Profile (MSVP) indicator revolutionizes traditional 
 - **Advanced Buy/Sell Analysis** - Dynamic volume estimator analyzes wicks and trends
 - **Flexible Display Modes** - View as Up/Down, Total Volume, or Delta
 - **Peak Rectangle Highlighting** - Automatically draws rectangles around high-volume peaks with configurable threshold
+- **Peak Price Labels** - Displays price labels on peak rectangles with customizable size, position, color, and display modes
 - **Performance Optimizations** - Conditional calculations save ~320 ops/bar when features disabled
 - **Dynamic Row Sizing** - Automatically adjusts profile resolution based on price range
 - **13 Built-in Alerts** - Real-time notifications for key level crosses (optional)
@@ -78,6 +79,12 @@ Profiles reset when cumulative delta's market structure breaks (new HH or LL in 
   - Customizable border color and fill transparency
   - Adjustable border width (1-4 pixels)
   - Configurable extension bars (10-200 bars forward)
+- **Peak Labels**: Customizable price labels on peak rectangles
+  - **Display Mode**: Single range ("231.00 - 242.00") or dual labels (separate top/bottom)
+  - **Font Size**: Adjustable from 6-20 (default: 15)
+  - **Horizontal Position**: Left, center, or right within rectangle (default: right)
+  - **Label Colors**: Customizable text and background colors
+  - **Default**: Single range mode with black text on transparent background
 
 ### Performance Options
 - **Enable Alert Conditions**: Toggle alert calculations on/off (default: off)
@@ -145,12 +152,15 @@ This indicator uses the following Pine Script libraries:
 
 See [CHANGELOG.md](changelog/CHANGELOG.md) for detailed version history.
 
-**Current Version: 1.0.7** (2025-01-18)
-- Added user-configurable Peak Volume Threshold (10-90%)
-  - Fine-tune peak rectangle sensitivity based on market conditions
-  - Lower thresholds detect more granular volume clusters
-  - Higher thresholds focus on dominant institutional levels
-- Enhanced peak detection flexibility for different trading styles
+**Current Version: 1.0.8** (2025-01-18)
+- Added comprehensive peak price labels feature
+  - Display price labels on peak rectangles showing top/bottom prices
+  - Two display modes: single range ("231.00 - 242.00") or dual labels
+  - Fully customizable: font size, position, colors, transparency
+  - Smart positioning with 15% inset to keep labels inside rectangles
+  - Default: single range mode with size 15, black text on transparent background
+- Enhanced user experience with intuitive label configuration
+- Optimized label positioning for all horizontal positions (left/center/right)
 
 **Version 1.0.6** (2025-01-17)
 - Performance optimizations: ~320 ops/bar saved with conditional calculations
