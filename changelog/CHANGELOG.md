@@ -5,6 +5,44 @@ All notable changes to the Market Structure Volume Profile (au-MSVP) indicator w
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.7] - 2025-01-18
+
+### Added
+- **Peak Volume Threshold Configuration**: New user-configurable setting for peak detection sensitivity
+  - Range: 10-90% of maximum volume (default: 50%)
+  - Step size: 5%
+  - Lower threshold = more peaks detected (increased sensitivity)
+  - Higher threshold = fewer but stronger peaks (reduced sensitivity)
+  - Allows traders to fine-tune peak rectangle highlighting based on:
+    - Market volatility conditions
+    - Trading timeframe
+    - Personal analysis preferences
+    - Institutional vs retail level focus
+
+### Changed
+- **Peak Detection Algorithm**: Replaced hardcoded 50% threshold with dynamic user parameter
+  - Previous: `float volumeThreshold = maxVol * 0.5`
+  - Updated: `float volumeThreshold = maxVol * (peakVolumeThreshold / 100.0)`
+  - Added inline documentation explaining calculation method
+  - Maintains backward compatibility with 50% default value
+
+### Technical Details
+- Lines 411-418: New `peakVolumeThreshold` input parameter in Rectangle Frame group
+- Lines 702-709: Updated threshold calculation with explanatory comments
+- Input type: `input.float()` with constraints (minval: 10.0, maxval: 90.0)
+- Tooltip provides clear guidance on threshold behavior and trade-offs
+
+### Use Cases
+- **10-30%**: High sensitivity for scalping and intraday mean reversion
+- **40-60%**: Balanced detection for swing trading and multi-timeframe analysis
+- **70-90%**: Focus on dominant institutional levels and major support/resistance
+
+### Notes
+- Default 50% maintains identical behavior to v1.0.6 and earlier
+- Threshold applies to total volume (buy + sell) regardless of Volume Display mode
+- Peak detection remains tied to continuous high-volume zones (state machine logic)
+- No impact on POC, Value Area, VWAP, or StdDev calculations
+
 ## [1.0.6] - 2025-01-17
 
 ### Added
@@ -135,6 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version References
 
+- **[1.0.7]** - Configurable peak volume threshold (10-90%)
 - **[1.0.6]** - Performance optimizations and user preference defaults
 - **[1.0.4]** - Peak rectangle timing fixes
 - **[1.0.3]** - Rectangle backward-shift alignment improvement

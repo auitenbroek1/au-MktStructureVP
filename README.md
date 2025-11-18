@@ -1,6 +1,6 @@
 # Market Structure Volume Profile (au-MSVP)
 
-![Version](https://img.shields.io/badge/version-1.0.6-blue)
+![Version](https://img.shields.io/badge/version-1.0.7-blue)
 ![Pine Script](https://img.shields.io/badge/Pine%20Script-v6-brightgreen)
 ![License](https://img.shields.io/badge/license-MPL--2.0-orange)
 
@@ -16,7 +16,7 @@ The Market Structure Volume Profile (MSVP) indicator revolutionizes traditional 
 - **Statistical Profile Engine** - Uses PDF (Probability Density Function) models for accurate volume distribution
 - **Advanced Buy/Sell Analysis** - Dynamic volume estimator analyzes wicks and trends
 - **Flexible Display Modes** - View as Up/Down, Total Volume, or Delta
-- **Peak Rectangle Highlighting** - Automatically draws rectangles around high-volume peaks
+- **Peak Rectangle Highlighting** - Automatically draws rectangles around high-volume peaks with configurable threshold
 - **Performance Optimizations** - Conditional calculations save ~320 ops/bar when features disabled
 - **Dynamic Row Sizing** - Automatically adjusts profile resolution based on price range
 - **13 Built-in Alerts** - Real-time notifications for key level crosses (optional)
@@ -72,6 +72,8 @@ Profiles reset when cumulative delta's market structure breaks (new HH or LL in 
 - **Side**: Display on left or right
 - **Colors**: Customize buy/sell volume colors
 - **Peak Rectangles**: Enable/disable highlighting of high-volume peaks
+  - **Peak Volume Threshold**: Adjust sensitivity (10-90%, default: 50%)
+    - Lower values detect more peaks, higher values detect fewer but stronger peaks
   - Toggle border visibility with Show Peak Border
   - Customizable border color and fill transparency
   - Adjustable border width (1-4 pixels)
@@ -143,7 +145,14 @@ This indicator uses the following Pine Script libraries:
 
 See [CHANGELOG.md](changelog/CHANGELOG.md) for detailed version history.
 
-**Current Version: 1.0.6** (2025-01-17)
+**Current Version: 1.0.7** (2025-01-18)
+- Added user-configurable Peak Volume Threshold (10-90%)
+  - Fine-tune peak rectangle sensitivity based on market conditions
+  - Lower thresholds detect more granular volume clusters
+  - Higher thresholds focus on dominant institutional levels
+- Enhanced peak detection flexibility for different trading styles
+
+**Version 1.0.6** (2025-01-17)
 - Performance optimizations: ~320 ops/bar saved with conditional calculations
 - Added Peak Border toggle for peak rectangle border visibility
 - Added Enable Alerts toggle to gate alert condition calculations

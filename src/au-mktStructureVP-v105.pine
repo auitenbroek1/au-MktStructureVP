@@ -408,6 +408,15 @@ int peakExtensionBars = input.int(
   step    = 1,
   tooltip = "Number of bars to extend peak rectangles forward from the profile end.")
 
+float peakVolumeThreshold = input.float(
+  title   = "Peak Volume Threshold (%)",
+  group   = gR,
+  defval  = 50.0,
+  minval  = 10.0,
+  maxval  = 90.0,
+  step    = 5.0,
+  tooltip = "Volume threshold for peak detection. Rows with volume >= this % of maximum volume are highlighted. Lower = more peaks, Higher = fewer peaks.")
+
 // ── CALCULATION ──────────────────────────────────────────────────────────────
 varip series string chartTF  = timeframe.main_period
 varip series string ibTF     = ctmLTF ? manLTF : LibTmFr.autoLTF(chartTF)
@@ -693,10 +702,11 @@ if endBar >= startBar
     // ══════════════════════════════════════════════════════════════════
     // PEAK DETECTION THRESHOLD CALCULATION
     // ══════════════════════════════════════════════════════════════════
-    // Calculate volume threshold for peak detection.
-    // Uses 50% of maximum volume to identify high-volume zones.
+    // Calculate volume threshold for peak detection using user-configurable percentage.
+    // Converts percentage (0-100) to decimal multiplier (0.0-1.0).
+    // Lower threshold = more peaks detected, Higher threshold = fewer but stronger peaks.
 
-    float volumeThreshold = maxVol * 0.5
+    float volumeThreshold = maxVol * (peakVolumeThreshold / 100.0)
 
     var array<float> volumeArray = array.new<float>()
     array.clear(volumeArray)
