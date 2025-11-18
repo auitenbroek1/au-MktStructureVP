@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Peak Volume Threshold Configuration**: New user-configurable setting for peak detection sensitivity
-  - Range: 10-90% of maximum volume (default: 50%)
+  - Range: 10-90% of maximum volume (default: 30%)
   - Step size: 5%
   - Lower threshold = more peaks detected (increased sensitivity)
   - Higher threshold = fewer but stronger peaks (reduced sensitivity)
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Previous: `float volumeThreshold = maxVol * 0.5`
   - Updated: `float volumeThreshold = maxVol * (peakVolumeThreshold / 100.0)`
   - Added inline documentation explaining calculation method
-  - Maintains backward compatibility with 50% default value
+  - Default optimized to 30% based on user testing for better peak detection
 
 ### Technical Details
 - Lines 411-418: New `peakVolumeThreshold` input parameter in Rectangle Frame group
@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **70-90%**: Focus on dominant institutional levels and major support/resistance
 
 ### Notes
-- Default 50% maintains identical behavior to v1.0.6 and earlier
+- Default 30% provides enhanced peak detection compared to v1.0.6's hardcoded 50%
 - Threshold applies to total volume (buy + sell) regardless of Volume Display mode
 - Peak detection remains tied to continuous high-volume zones (state machine logic)
 - No impact on POC, Value Area, VWAP, or StdDev calculations

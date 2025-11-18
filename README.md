@@ -72,7 +72,7 @@ Profiles reset when cumulative delta's market structure breaks (new HH or LL in 
 - **Side**: Display on left or right
 - **Colors**: Customize buy/sell volume colors
 - **Peak Rectangles**: Enable/disable highlighting of high-volume peaks
-  - **Peak Volume Threshold**: Adjust sensitivity (10-90%, default: 50%)
+  - **Peak Volume Threshold**: Adjust sensitivity (10-90%, default: 30%)
     - Lower values detect more peaks, higher values detect fewer but stronger peaks
   - Toggle border visibility with Show Peak Border
   - Customizable border color and fill transparency
